@@ -1,13 +1,28 @@
 # @package _global_
 
-# overfits to 3 batches
-
+# debug settings for overfitting a model on a small subset of data
 defaults:
   - default
 
+# overfit on 1 batch to verify model can learn
 trainer:
-  max_epochs: 20
-  overfit_batches: 3
+  overfit_batches: 1
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  deterministic: false
+  detect_anomaly: true
+
+# use only 1 worker to ensure consistent loading
+data:
+  num_workers: 0
+  pin_memory: false
+  sampling_strategy: "balanced"  # Use balanced sampling to ensure both classes are present
+
+# model settings for overfitting
+model:
+  optimizer:
+    lr: 0.01  # Higher learning rate for faster memorization
 
 # model ckpt and early stopping need to be disabled during overfitting
 callbacks: null

@@ -1295,3 +1295,30 @@ You can override any parameter from command line like this
 ```bash
 python src/train.py trainer.max_epochs=20 data.batch_size=64
 ```
+
+## Training on the Binding Site Dataset
+
+To train the TabNet model on the full binding site dataset:
+
+```bash
+# Basic training with default parameters
+python src/train.py experiment=binding_site
+
+# Training with GPU acceleration
+python src/train.py experiment=binding_site trainer=gpu
+
+# Training with higher learning rate
+python src/train.py experiment=binding_site model.optimizer.lr=0.01
+
+# Training with balanced sampling strategy
+python src/train.py experiment=binding_site data.sampling_strategy="balanced"
+
+# Full training with customized parameters
+python src/train.py experiment=binding_site trainer.max_epochs=200 model.optimizer.lr=0.01 data.sampling_strategy="balanced" trainer=gpu
+```
+
+The training will use the Intersection over Union (IoU) metric for validation monitoring, and results will be saved in the logs directory. After training, you can evaluate the model using:
+
+```bash
+python src/eval.py experiment=binding_site ckpt_path="/path/to/best/checkpoint.ckpt"
+```

@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+  - override /data: binding_site
+  - override /model: binding_site
+  - override /trainer: default
+
+task_name: "train"
+
+tags: ["binding_site", "chen11", "bu48", "tabnet"]
+
+train: True
+test: True
+
+seed: 42

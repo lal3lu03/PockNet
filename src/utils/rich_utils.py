@@ -26,7 +26,7 @@ def print_config_tree(
         "paths",
         "extras",
     ),
-    resolve: bool = False,
+    resolve: bool = True,
     save_to_file: bool = False,
 ) -> None:
     """Prints the contents of a DictConfig as a tree structure using the Rich library.
