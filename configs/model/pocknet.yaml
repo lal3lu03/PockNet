@@ -1,0 +1,31 @@
+# @package model
+
+defaults:
+  - default
+
+_target_: src.models.pocknet_binding_site_module.PockNetBindingSiteModule
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 0.001
+  weight_decay: 1e-5
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _partial_: true
+  T_max: 100  # Total number of epochs
+  eta_min: 1e-6  # Minimum learning rate
+
+# PockNet hyperparameters
+input_dim: 41  # Updated to exclude protrusion.distanceToCenter (42 - 1 = 41)
+output_dim: 1
+n_steps: 8
+n_d: 64
+n_a: 64
+n_shared: 2
+n_independent: 2
+gamma: 2.5
+epsilon: 1e-15
+dropout: 0.2
+use_iou_metric: true

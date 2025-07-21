@@ -68,7 +68,7 @@ class BindingSiteDataModule(LightningDataModule):
             if not self.data_test:
                 print(f"Loading bu48 evaluation dataset from {self.hparams.data_dir}/bu48/vectorsEval.csv")
                 # Load bu48 evaluation data
-                eval_data = pd.read_csv(f"{self.hparams.data_dir}/bu48/vectorsEval.csv")
+                eval_data = pd.read_csv(f"{self.hparams.data_dir}/bu48_old/vectorsEval.csv")
                 
                 # Removing the file_name column if it exists
                 if 'file_name' in eval_data.columns:
@@ -92,9 +92,9 @@ class BindingSiteDataModule(LightningDataModule):
 
         # Load training/validation data (if not in test-only mode with bu48)
         if not self.data_train and not self.data_val and not self.data_test:
-            # Load training data - updating path to data/data/chen11
+            # Load training data - using chen11_old directory
             # Updated to use 'class' column instead of 'label'
-            train_data = pd.read_csv(f"{self.hparams.data_dir}/data/chen11/vectorsTrain.csv")
+            train_data = pd.read_csv(f"{self.hparams.data_dir}/chen11_old/vectorsTrain.csv")
             
             # Removing the file_name column as it's not a feature
             if 'file_name' in train_data.columns:

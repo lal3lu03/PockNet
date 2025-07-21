@@ -1,0 +1,2 @@
+train_test_auc_gap,train_test_accuracy_gap,top_feature_importance,top5_importance_concentration,generalization_score
+0.11647461322250396,0.09914203539578648,0.3131978964765889,0.5130300953553979,0.876052039446929

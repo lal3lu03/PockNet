@@ -8,8 +8,8 @@ _target_: src.models.tabnet_binding_site_module.TabNetBindingSiteModule
 optimizer:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 0.01  # Increased from 0.001 for faster learning
-  weight_decay: 0.0001
+  lr: 1e-3  # Increased from 0.001 for faster learning
+  weight_decay: 1e-4
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
@@ -19,9 +19,9 @@ scheduler:
   patience: 10
 
 # Model hyperparameters
-n_d: 128  # Increased from 64
-n_a: 128  # Increased from 64
-n_steps: 8  # Increased from 5
+n_d: 64  # Increased from 64
+n_a: 64  # Increased from 64
+n_steps: 5  # Increased from 5
 gamma: 1.5
 cat_idxs: []
 cat_dims: []

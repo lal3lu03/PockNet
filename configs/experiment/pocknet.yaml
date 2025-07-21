@@ -1,0 +1,57 @@
+# @package _global_
+
+# Modified PockNet experiment:
+# 1. Excluded protrusion.distanceToCenter feature for better generalization
+# 2. Changed learning rate scheduler from ReduceLROnPlateau to CosineAnnealingLR
+# 
+# to execute this experiment run:
+# python train.py experiment=pocknet
+
+defaults:
+  - override /data: pocknet
+  - override /model: pocknet
+  - override /callbacks: default
+  - override /trainer: gpu_custom
+  - override /logger: wandb_ddp
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+task_name: "train_pocknet_no_distance_cosine"
+tags: ["pocknet", "binding_site", "chen11", "bu48", "tabnet", "no_distance_feature", "cosine_scheduler"]
+
+seed: 42
+
+# Training and test settings
+train: True
+test: True
+
+# Trainer configurations
+trainer:
+  min_epochs: 10
+  max_epochs: 10
+  gradient_clip_val: 0.5
+
+# Data configurations
+data:
+  batch_size: 255
+  sampling_strategy: "combined"
+  normalize_features: true
+
+# Model configurations
+model:
+  # Optimizer hyperparams
+  optimizer:
+    lr: 0.001           # lower LR for stable convergence
+    weight_decay: 1e-5  # light L2 regularization
+
+  # Scheduler override - using cosine annealing instead of ReduceLROnPlateau
+  scheduler:
+    T_max: 100        # Match max_epochs
+    eta_min: 1e-6     # Minimum learning rate
+
+  # TabNet‐style architecture
+  n_steps: 8           # more decision steps
+  n_d: 64              # wider decision layer
+  n_a: 64              # wider attention layer
+  dropout: 0.2         # modest dropout

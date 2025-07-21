@@ -143,6 +143,11 @@ dmypy.json
 *.h5
 *.tar
 *.tar.gz
+*.zip
+*.pkl
+*.pkl.gz
+*.pdb
+*.ckpt
 
 # Lightning-Hydra-Template
 configs/local/default.yaml
@@ -152,3 +157,31 @@ configs/local/default.yaml
 
 # Aim logging
 .aim
+
+
+# Add to /system/user/studentwork/hageneder/MSC/Practical_work/PockNet/.gitignore
+
+# === PockNet Data Generation ===
+# P2Rank specific files
+PockNet_datageneration/p2rank/*.iml
+PockNet_datageneration/p2rank/*.ipr  
+PockNet_datageneration/p2rank/*.iws
+PockNet_datageneration/p2rank/*.class
+PockNet_datageneration/p2rank/logs/*
+PockNet_datageneration/p2rank/*.log
+PockNet_datageneration/p2rank/out/*
+PockNet_datageneration/p2rank/*.stackdump
+PockNet_datageneration/p2rank/local*
+!PockNet_datageneration/p2rank/*.pdb
+!PockNet_datageneration/p2rank/lib/*
+!PockNet_datageneration/p2rank/*.md
+PockNet_datageneration/p2rank/distro/log/*
+
+# Data generation outputs (large files)
+PockNet_datageneration/output*/
+PockNet_datageneration/out_*/
+PockNet_datageneration/chen11_test_prep/
+PockNet_datageneration/wandb/
+PockNet_datageneration/*.log
+!PockNet_datageneration/out_test/
+!PockNet_datageneration/out_train/

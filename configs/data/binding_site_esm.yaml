@@ -1,0 +1,13 @@
+# @package data
+
+_target_: src.data.binding_site_esm_datamodule.BindingSiteESMDataModule
+
+data_dir: ${paths.data_dir}
+esm_dir: ${paths.data_dir}/esm2
+embedding_type: "mean"  # Options: "mean", "max", "first"
+batch_size: 256
+train_val_test_split: [0.7, 0.15, 0.15]
+num_workers: 0
+pin_memory: false
+sampling_strategy: "combined"
+eval_dataset: "chen11"  # Options: "chen11", "bu48"

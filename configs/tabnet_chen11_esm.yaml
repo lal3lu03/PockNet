@@ -1,0 +1,31 @@
+# @package _global_
+
+# This config is for training with ESM2 embeddings
+
+defaults:
+  - _self_
+  - paths: default
+  - trainer: gpu
+  - model: tabnet_binding_site
+  - data: binding_site_esm  # Use our new ESM data module
+  - callbacks: default
+  - logger: wandb
+  - debug: default
+  - experiment: chen11_esm_embeddings  # Use our ESM experiment config
+  - hydra: default
+
+# Override any default configurations here
+seed: 42
+name: tabnet_chen11_esm_embeddings
+trainer:
+  max_epochs: 100
+
+data:
+  batch_size: 1024
+  sampling_strategy: "combined"
+  embedding_type: "mean"
+
+# Additional configuration for the run
+hydra:
+  job:
+    name: ${name}

@@ -1,0 +1,28 @@
+# @package _global_
+
+# Weights & Biases DDP-optimized configuration
+# Simplified for better compatibility
+
+defaults:
+  - override /logger: wandb
+
+logger:
+  wandb:
+    _target_: lightning.pytorch.loggers.wandb.WandbLogger
+    project: "PockNet"
+    name: "${task_name}"
+    save_dir: "${paths.output_dir}"
+    offline: false
+    id: null
+    anonymous: null
+    log_model: false
+    prefix: ""
+    group: "${task_name}"
+    tags: ${tags}
+    job_type: "train"
+    
+# Additional DDP-specific settings
+extras:
+  wandb_ddp_mode: true  # Flag to enable DDP-specific behaviors
+  wandb_sync_tensorboard: false  # Disable TB sync in DDP to avoid conflicts
+  wandb_log_model_frequency: null  # Disable frequent model logging in DDP

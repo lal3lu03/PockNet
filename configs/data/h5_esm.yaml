@@ -1,0 +1,12 @@
+# @package _global_
+
+# H5-based ESM datamodule configuration
+data:
+  _target_: src.data.h5_esm_datamodule.H5EsmDataModule
+  train_h5: "data/h5/chen11_with_esm.h5"
+  test_h5: "data/h5/bu48_with_esm.h5"
+  val_split: 0.1
+  batch_size: 1024
+  num_workers: 16
+  pin_memory: true
+  persistent_workers: true

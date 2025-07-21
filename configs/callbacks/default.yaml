@@ -11,6 +11,7 @@ model_checkpoint:
   monitor: "val/iou"
   mode: "max"
   save_last: True
+  save_top_k: 3
   auto_insert_metric_name: False
 
 early_stopping:

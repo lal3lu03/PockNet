@@ -1,0 +1,6 @@
+defaults:
+  - default
+
+accelerator: gpu
+devices: [0,1,2,3,6]  # Using allowed CUDA devices
+strategy: ddp_find_unused_parameters_true

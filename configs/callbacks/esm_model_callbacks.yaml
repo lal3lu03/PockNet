@@ -1,0 +1,33 @@
+# @package callbacks
+
+model_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "epoch_{epoch:03d}"
+  monitor: "val/acc"
+  verbose: false
+  save_last: true
+  save_top_k: 1
+  mode: "max"
+  auto_insert_metric_name: false
+  save_weights_only: false
+
+early_stopping:
+  _target_: lightning.pytorch.callbacks.EarlyStopping
+  monitor: "val/acc"
+  min_delta: 0.0
+  patience: 100
+  verbose: false
+  mode: "max"
+  strict: true
+  check_finite: true
+  stopping_threshold: null
+  divergence_threshold: null
+  check_on_train_epoch_end: null
+
+model_summary:
+  _target_: lightning.pytorch.callbacks.RichModelSummary
+  max_depth: -1
+
+rich_progress_bar:
+  _target_: lightning.pytorch.callbacks.RichProgressBar

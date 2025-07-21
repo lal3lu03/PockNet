@@ -1,0 +1,34 @@
+# @package _global_
+
+# ESM + Tabular fusion model for binding site prediction
+model:
+  _target_: src.models.esm_tabular_module.EsmTabularModule
+
+  # Network architecture
+  tabular_dim: 45
+  esm_dim: 2560
+  hidden_dims: [1024, 512, 256]
+  dropout: 0.2
+
+  # Fusion strategy
+  fusion_method: "concat"  # Options: concat, attention, gated
+  fusion_dim: 512
+
+  # Output
+  num_classes: 2
+
+  # Optimizer
+  optimizer:
+    _target_: torch.optim.AdamW
+    _partial_: true
+    lr: 0.001
+    weight_decay: 0.01
+
+  # Scheduler  
+  scheduler:
+    _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+    _partial_: true
+    mode: "max"
+    factor: 0.5
+    patience: 10
+    verbose: true

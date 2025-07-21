@@ -2,8 +2,8 @@
 
 defaults:
   - _self_
-  - data: mnist # choose datamodule with `test_dataloader()` for evaluation
-  - model: mnist
+  - data: binding_site # choose datamodule with `test_dataloader()` for evaluation
+  - model: binding_site
   - logger: null
   - trainer: default
   - paths: default
