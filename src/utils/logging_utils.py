@@ -277,6 +277,16 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
     # Enhanced model parameter logging (DDP-safe)
     model_info = log_model_architecture(model)
     hparams.update(model_info)
+    # Also log model parameter counts as metrics (e.g., total, trainable, non_trainable, total_MB)
+    metric_keys = ["model/params/total", "model/params/trainable", "model/params/non_trainable", "model/params/total_MB"]
+    param_metrics = {k: model_info[k] for k in metric_keys if k in model_info}
+    for logger in trainer.loggers:
+        try:
+            if hasattr(logger, 'log_metrics'):
+                logger.log_metrics(param_metrics, step=0)
+                log.info(f"Logged model parameter metrics to {type(logger).__name__}")
+        except Exception as e:
+            log.warning(f"Failed to log model parameter metrics to {type(logger).__name__}: {e}")
     
     # Log DDP information
     ddp_info = log_ddp_info(trainer)

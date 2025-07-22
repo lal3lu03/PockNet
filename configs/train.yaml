@@ -7,7 +7,7 @@ defaults:
   - data: binding_site
   - model: binding_site
   - callbacks: default
-  - logger: null # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - logger: wandb # enable W&B logging by default
   - trainer: default
   - paths: default
   - extras: default

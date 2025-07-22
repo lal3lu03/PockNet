@@ -8,7 +8,7 @@ seed: 1234567
 train_csv: ../output_chen11/vectorsTrain.csv
 finetune_csv: ../output_train/finetune.csv
 test_csv: ../output_holo4k/vectorsTrain.csv
-features_file: ../p2rank/distro/models/default/features.txt
+features_file: ../features.txt
 
 # Additional options for imbalanced data
 class_weight: "balanced"  # "balanced", "balanced_subsample", or null for no weighting

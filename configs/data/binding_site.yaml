@@ -3,8 +3,10 @@
 _target_: src.data.binding_site_datamodule.BindingSiteDataModule
 
 data_dir: ${paths.data_dir}
+train_file: ${data_dir}/output_train/vectorsTrain_all.csv
+features_file: ${data_dir}/features.txt
 batch_size: 256
 train_val_test_split: [0.7, 0.15, 0.15]
 num_workers: 0
 pin_memory: false
-sampling_strategy: "combined"
+sampling_strategy: "none"

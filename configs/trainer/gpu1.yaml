@@ -1,0 +1,7 @@
+# Trainer config for running on CUDA device 1
+
+defaults:
+  - default
+
+accelerator: gpu
+devices: [1]
