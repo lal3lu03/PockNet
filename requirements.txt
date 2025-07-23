@@ -9,7 +9,7 @@
 
 # --------- Core PyTorch ecosystem --------- #
 torch==2.6.0
-torchvision==0.21.0
+torchvision==0.22.1
 torchmetrics==1.6.1
 torchinfo==1.8.0
 triton==3.2.0
