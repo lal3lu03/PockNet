@@ -15,7 +15,7 @@ torchinfo==1.8.0
 triton==3.2.0
 
 # --------- NVIDIA CUDA dependencies --------- #
-nvidia-cublas-cu12==12.4.5.8
+nvidia-cublas-cu12==12.9.1.4
 nvidia-cuda-cupti-cu12==12.4.127
 nvidia-cuda-nvrtc-cu12==12.4.127
 nvidia-cuda-runtime-cu12==12.4.127
