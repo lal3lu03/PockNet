@@ -5,3 +5,4 @@ defaults:
 
 accelerator: gpu
 devices: [1]
+precision: 16 # Use mixed precision for faster training

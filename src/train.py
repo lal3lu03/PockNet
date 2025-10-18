@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
+import os
 import hydra
 import lightning as L
 import rootutils
@@ -7,6 +8,7 @@ import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
+from hydra.utils import to_absolute_path
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # ------------------------------------------------------------------------------------ #
@@ -37,6 +39,16 @@ from src.utils import (
 )
 
 log = RankedLogger(__name__, rank_zero_only=True)
+
+
+def _resolve_ckpt_path(path: Optional[str]) -> Optional[str]:
+    """Resolve checkpoint paths relative to the original working directory."""
+    if not path:
+        return None
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return expanded
+    return to_absolute_path(expanded)
 
 
 @task_wrapper
@@ -82,20 +94,33 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         log.info("Logging hyperparameters!")
         log_hyperparameters(object_dict)
 
+    ckpt_cfg_path = cfg.get("ckpt_path")
+    train_ckpt_path = _resolve_ckpt_path(ckpt_cfg_path)
+
     if cfg.get("train"):
         log.info("Starting training!")
-        trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
+        trainer.fit(model=model, datamodule=datamodule, ckpt_path=train_ckpt_path)
 
     train_metrics = trainer.callback_metrics
 
     if cfg.get("test"):
         log.info("Starting testing!")
-        ckpt_path = trainer.checkpoint_callback.best_model_path
-        if ckpt_path == "":
-            log.warning("Best ckpt not found! Using current weights for testing...")
-            ckpt_path = None
-        trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
-        log.info(f"Best ckpt path: {ckpt_path}")
+        ckpt_override = _resolve_ckpt_path(ckpt_cfg_path)
+        if ckpt_override:
+            test_ckpt_path = ckpt_override
+            log.info(f"Using provided checkpoint for testing: {test_ckpt_path}")
+        else:
+            best_path = trainer.checkpoint_callback.best_model_path
+            if best_path == "":
+                log.warning("Best ckpt not found! Using current weights for testing...")
+                test_ckpt_path = None
+            else:
+                test_ckpt_path = _resolve_ckpt_path(best_path)
+        trainer.test(model=model, datamodule=datamodule, ckpt_path=test_ckpt_path)
+        if test_ckpt_path:
+            log.info(f"Tested checkpoint path: {test_ckpt_path}")
+        else:
+            log.info("Tested using current in-memory model weights (no checkpoint provided).")
 
     test_metrics = trainer.callback_metrics
 

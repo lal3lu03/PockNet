@@ -1,0 +1,76 @@
+# @package model
+
+# ESM + Tabular Model with Transformer-based k-NN Aggregation
+# Uses attention mechanism to aggregate k nearest neighbor embeddings
+
+_target_: src.models.esm_tabular_module.EsmTabularModule
+
+# Network architecture
+tabular_dim: 35
+esm_dim: 2560
+hidden_dims: [1024, 512, 256]
+dropout: 0.2
+
+# Fusion strategy
+fusion_method: "concat"  # Options: concat, attention, gated, film, late_logit
+fusion_dim: 512
+modality_dropout_p: 0.0
+
+# ⭐ Aggregation mode selection
+aggregation_mode: "transformer"  # "mean" | "transformer"
+
+# k-NN parameters (for mean mode compatibility)
+k_res_neighbors: 3
+neighbor_weighting: "softmax"
+neighbor_temp: 2.0
+
+# ⭐ Transformer aggregation parameters
+neighbor_attention_heads: 6        # Number of attention heads (projected to 2400 => head dim 400)
+neighbor_attention_layers: 2       # Number of transformer layers
+neighbor_attention_dim_ff: 1024    # Feed-forward hidden dimension
+neighbor_attention_dropout: 0.1    # Dropout probability
+distance_bias_type: "learned"      # "learned" | "exponential" | "none"
+attention_pooling: "mean"          # "mean" | "max" | "cls"
+neighbor_attention_proj_dim: 2400  # Project embeddings before attention to ensure divisibility by num_heads
+
+# Gating regularisation defaults
+gate_penalty_weight: 0.02
+gate_penalty_target: 0.6
+gate_temperature: 1.0
+gate_dropout_p: 0.0
+gate_dropout_target: 0.6
+neighbor_context_scale: 1.0
+gate_penalty_start: null
+gate_penalty_end: null
+gate_dropout_start: null
+gate_dropout_end: null
+neighbor_context_scale_start: null
+neighbor_context_scale_end: null
+gate_schedule_epochs: 0
+aux_neighbor_head_weight: 0.0
+aux_neighbor_head_weight_start: null
+aux_neighbor_head_weight_end: null
+aux_neighbor_head_schedule_epochs: 0
+aux_distance_temperature: 5.0
+
+# Output configuration
+num_classes: 1
+loss_type: "bce"
+initial_pos_prior: 0.0246
+
+# Optimizer
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 0.0001
+  weight_decay: 0.01
+
+# Scheduler
+scheduler:
+  _target_: torch.optim.lr_scheduler.OneCycleLR
+  _partial_: true
+  max_lr: 0.003
+  pct_start: 0.3
+  anneal_strategy: "cos"
+  div_factor: 25.0
+  final_div_factor: 10000.0

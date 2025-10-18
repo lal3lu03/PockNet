@@ -1,0 +1,27 @@
+# @package data
+
+# H5 configuration for legacy mean aggregation with optional on-the-fly k-NN averaging.
+# Points to the same optimized H5 but enables PracticalKNNCache in the datamodule.
+
+_target_: src.data.shared_memory_datamodule_v2.TrueSharedMemoryDataModule
+
+# File locations (relative to PROJECT_ROOT if not absolute)
+h5_filename: "data/h5/all_train_transformer_v2_optimized.h5"
+data_dir: ""
+bu48_ids_file: "data/output_train/test_vectorsTrain_all_names_bu48.txt"
+pdb_base_dir: "data/p2rank-datasets"
+
+# Loader settings, tuned for multi-GPU training
+batch_size: 512
+num_workers: 2
+pin_memory: false
+val_split: 0.2
+test_split: 0.0
+val_split_seed: 42
+
+# Enable k-NN aggregation from the H5 neighbor datasets
+enable_knn: true
+k_max: 3
+
+# Optional transforms
+transform: null

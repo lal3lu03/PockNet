@@ -1,0 +1,18 @@
+# Default configuration for the enhanced post-processing pipeline
+checkpoint_paths:
+  - ../../logs/fusion_all_train_complete/runs/2025-09-04_19-45-33/checkpoints/epoch=11-val_auprc=0.2743.ckpt
+  - ../../logs/fusion_all_train_complete/runs/2025-09-10_13-00-52/checkpoints/epoch=13-val_auprc=0.2688.ckpt
+  - ../../logs/fusion_all_train_complete/runs/2025-08-29_14-38-50/checkpoints/epoch=30-val_auprc=0.2681-v1.ckpt
+h5_file: ../../data/h5/pocknet_with_esm2_3b.h5
+output_dir: ../../post_processing_results
+protein_ids: null
+
+enhanced:
+  create_pymol: true
+  create_individual_folders: true
+  generate_summary: true
+  save_raw_predictions: true
+  save_true_pockets: true
+  max_pockets: 5
+  adaptive_percentiles: [95, 90, 85, 80]
+  fallback_threshold: 0.3

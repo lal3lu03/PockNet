@@ -38,9 +38,28 @@ def log_model_architecture(model: torch.nn.Module, input_size: tuple = None) -> 
 
     model_info = {}
 
+    # Check if model has actual parameters (not None or empty)
+    if unwrapped_model is None:
+        log.warning("Model is None, skipping parameter counting")
+        model_info.update({
+            "model/params/total": 0,
+            "model/params/trainable": 0,
+            "model/params/non_trainable": 0,
+            "model/params/total_MB": 0.0,
+        })
+        return model_info
+
+    # Check if the actual PockNet model exists (in case of LightningModule wrapper)
+    actual_model = unwrapped_model
+    if hasattr(unwrapped_model, 'model') and unwrapped_model.model is not None:
+        actual_model = unwrapped_model.model
+    elif hasattr(unwrapped_model, 'model') and unwrapped_model.model is None:
+        log.warning("Lightning model's internal model is None, using Lightning module parameters")
+        actual_model = unwrapped_model
+
     # Basic parameter counts
-    total_params = sum(p.numel() for p in unwrapped_model.parameters())
-    trainable_params = sum(p.numel() for p in unwrapped_model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in actual_model.parameters())
+    trainable_params = sum(p.numel() for p in actual_model.parameters() if p.requires_grad)
     non_trainable_params = total_params - trainable_params
 
     model_info.update({
@@ -52,7 +71,7 @@ def log_model_architecture(model: torch.nn.Module, input_size: tuple = None) -> 
 
     # Layer-wise parameter counts
     layer_info = {}
-    for name, module in unwrapped_model.named_modules():
+    for name, module in actual_model.named_modules():
         if len(list(module.children())) == 0:  # Leaf modules only
             module_params = sum(p.numel() for p in module.parameters())
             if module_params > 0:
@@ -61,13 +80,13 @@ def log_model_architecture(model: torch.nn.Module, input_size: tuple = None) -> 
     model_info.update(layer_info)
 
     # Model architecture string
-    model_info["model/architecture"] = str(unwrapped_model)
+    model_info["model/architecture"] = str(actual_model)
 
     # Try to get model summary if torchinfo is available
     try:
         from torchinfo import summary
-        if input_size is not None:
-            model_summary = summary(unwrapped_model, input_size=input_size, verbose=0)
+        if input_size is not None and actual_model is not None:
+            model_summary = summary(actual_model, input_size=input_size, verbose=0)
             model_info["model/summary"] = str(model_summary)
     except ImportError:
         log.warning("torchinfo not available. Install with 'pip install torchinfo' for detailed model summaries.")
@@ -100,20 +119,25 @@ def safe_wandb_watch(model: torch.nn.Module, logger=None, log_freq: int = 100, l
 
         # Only watch if wandb is initialized
         if wandb.run is not None:
-            # Check if model is already being watched to avoid duplicates
-            if not hasattr(wandb.run, '_watched_models'):
-                wandb.run._watched_models = set()
+            # Use a safer approach for tracking watched models
+            watched_models = getattr(wandb.run, '_pocknet_watched_models', set())
             
             model_id = id(unwrapped_model)
-            if model_id not in wandb.run._watched_models:
-                wandb.watch(
-                    unwrapped_model, 
-                    log="gradients", 
-                    log_freq=log_freq,
-                    log_graph=log_graph
-                )
-                wandb.run._watched_models.add(model_id)
-                log.info(f"W&B watching model with log_freq={log_freq}, log_graph={log_graph}")
+            if model_id not in watched_models:
+                try:
+                    wandb.watch(
+                        unwrapped_model, 
+                        log="gradients", 
+                        log_freq=log_freq,
+                        log_graph=log_graph
+                    )
+                    watched_models.add(model_id)
+                    wandb.run._pocknet_watched_models = watched_models
+                    log.info(f"W&B watching model with log_freq={log_freq}, log_graph={log_graph}")
+                except AttributeError as ae:
+                    log.warning(f"W&B watch method not available in this version: {ae}")
+                except Exception as e:
+                    log.warning(f"Failed to watch model: {e}")
             else:
                 log.info("Model already being watched by W&B, skipping duplicate watch")
         else:
@@ -283,7 +307,8 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
     for logger in trainer.loggers:
         try:
             if hasattr(logger, 'log_metrics'):
-                logger.log_metrics(param_metrics, step=0)
+                # Use None for step to let the logger handle it
+                logger.log_metrics(param_metrics, step=None)
                 log.info(f"Logged model parameter metrics to {type(logger).__name__}")
         except Exception as e:
             log.warning(f"Failed to log model parameter metrics to {type(logger).__name__}: {e}")
@@ -319,7 +344,12 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
     # send hparams to all loggers
     for logger in trainer.loggers:
         try:
-            logger.log_hyperparameters(hparams)
+            # Use the proper WandB method to log hyperparameters
+            if hasattr(logger, 'log_hyperparameters'):
+                logger.log_hyperparameters(hparams)
+            elif hasattr(logger, 'experiment') and hasattr(logger.experiment, 'config'):
+                # For WandB logger, update config directly
+                logger.experiment.config.update(hparams)
             log.info(f"Logged hyperparameters to {type(logger).__name__}")
         except Exception as e:
             log.warning(f"Failed to log hyperparameters to {type(logger).__name__}: {e}")
@@ -355,8 +385,8 @@ def recover_wandb_logging(trainer, model, attempt_count: int = 3) -> bool:
                 log.warning("W&B run is None - this suggests improper initialization")
                 return False
             
-            # Test W&B connectivity
-            wandb.log({"recovery_test": attempt}, step=0)
+            # Test W&B connectivity  
+            wandb.log({"recovery_test": attempt}, commit=False)
             log.info(f"W&B logging recovery successful on attempt {attempt + 1}")
             return True
             

@@ -1,0 +1,67 @@
+# @package trainer
+
+defaults:
+  - default
+
+# ESM2+PockNet Optimized DDP Configuration
+# Specifically tuned for large ESM2 embeddings and PockNet fusion
+
+_target_: lightning.pytorch.trainer.Trainer
+
+# Hardware configuration - adjust devices based on availability
+accelerator: gpu
+devices: 8  # Can be reduced to 4, 2, or 1 if needed
+num_nodes: 1
+
+# DDP strategy with unused parameters handling (important for fusion models)
+strategy: ddp_find_unused_parameters_true
+
+# Memory optimizations for large embeddings
+sync_batchnorm: true
+enable_checkpointing: true
+precision: 16-mixed  # Essential for fitting ESM2 models
+
+# Gradient management (important for stable ESM2 training)
+gradient_clip_val: 2.0  # Higher clip for larger models
+gradient_clip_algorithm: norm
+
+# Training duration
+min_epochs: 10
+max_epochs: 300
+
+# Validation strategy (less frequent to save time with large models)
+check_val_every_n_epoch: 5  # Validate every 5 epochs
+val_check_interval: 1.0  # Full epoch validation
+
+# Performance settings
+log_every_n_steps: 200  # Reduced logging frequency
+enable_progress_bar: true
+enable_model_summary: true
+
+# Reproducibility vs Performance tradeoff
+deterministic: false  # Set true for reproducible results (slower)
+benchmark: true  # Optimize for consistent ESM2 tensor shapes
+
+# Checkpoint and logging
+default_root_dir: ${paths.output_dir}
+
+# Error detection (disable for performance in production)
+detect_anomaly: false
+
+# Development and debugging options
+fast_dev_run: false
+# overfit_batches: 0.001  # Uncomment for model debugging
+
+# Data loading limits
+limit_train_batches: 1.0
+limit_val_batches: 1.0  
+limit_test_batches: 1.0
+
+# Gradient accumulation (increase if memory constrained)
+accumulate_grad_batches: 1  # Set to 2-4 if batch size needs to be reduced
+
+# Callbacks placeholder (filled by experiment config)
+callbacks: []
+
+# Profiler (enable for debugging)
+profiler: null  # Options: simple, advanced, pytorch

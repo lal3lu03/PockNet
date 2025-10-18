@@ -1,0 +1,36 @@
+# @package data
+
+# Transformer-based k-NN aggregation configuration
+# Uses attention mechanism over neighbor embeddings for enhanced aggregation
+
+defaults:
+  - _self_
+
+_target_: src.data.shared_memory_datamodule_v2.TrueSharedMemoryDataModule
+
+# H5 file configuration - TRANSFORMER MODE
+# Relative paths are resolved against PROJECT_ROOT
+h5_filename: "data/h5/all_train_transformer_v2_optimized.h5"
+data_dir: ""
+
+# DataLoader configuration - Optimized for 3×Volta GPUs (TITAN V 12GB)
+batch_size: 640              # Slightly larger per-GPU batch to offset removal of grad accumulation
+num_workers: 2
+pin_memory: False
+
+# Train/Val/Test split configuration  
+val_split: 0.2
+test_split: 0.0
+val_split_seed: 42
+
+# BU48 test proteins file
+bu48_ids_file: "data/output_train/test_vectorsTrain_all_names_bu48.txt"
+
+# k-NN configuration
+# Note: aggregation_mode is auto-detected from H5 file attributes, not a parameter
+enable_knn: false                # Disable legacy k-NN cache (neighbors precomputed in H5)
+k_max: 3                         # Number of neighbors (stored in H5)
+pdb_base_dir: "data/p2rank-datasets"
+
+# Transform configuration (optional)
+transform: null

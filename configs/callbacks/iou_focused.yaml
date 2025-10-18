@@ -1,3 +1,6 @@
+# Callback configuration focused on IoU monitoring
+# Use this when you want to monitor IoU instead of AUROC for model checkpointing
+
 defaults:
   - model_checkpoint
   - early_stopping
@@ -9,15 +12,15 @@ defaults:
 model_checkpoint:
   dirpath: ${paths.output_dir}/checkpoints
   filename: "epoch_{epoch:03d}"
-  monitor: "val/auprc"
+  monitor: "val/iou"
   mode: "max"
   save_last: True
   save_top_k: 3
   auto_insert_metric_name: False
 
 early_stopping:
-  monitor: "val/auprc"
-  patience: 100
+  monitor: "val/iou"
+  patience: 50  # Lower patience since IoU can be more volatile
   mode: "max"
 
 model_summary:

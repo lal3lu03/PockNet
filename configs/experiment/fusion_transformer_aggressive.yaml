@@ -1,0 +1,158 @@
+# @package _global_
+
+# AGGRESSIVE Transformer k-NN Configuration - Quick Win Strategy
+# Target: 0.27-0.30 AUPRC (up from 0.24 baseline)
+# Changes: More capacity, lower LR, force neighbor usage
+
+defaults:
+  - override /data: h5_transformer_aggregation
+  - override /model: esm_tabular_transformer
+  - override /callbacks: default
+  - override /trainer: gpu
+  - override /logger: wandb
+
+task_name: "fusion_transformer_aggressive"
+tags: ["esm2", "tabular", "fusion", "transformer", "attention", "knn", "aggressive", "bu48_test"]
+
+seed: 42
+
+train: true
+test: true
+
+# Trainer optimized for 3×Volta GPUs with incremental capacity increase
+trainer:
+  min_epochs: 5
+  max_epochs: 80  # Reduced: previous run peaked ~epoch 27, stop earlier
+  gradient_clip_val: 0.5
+  devices: 3
+  strategy: "ddp_find_unused_parameters_true"
+  precision: "32-true"
+  sync_batchnorm: true
+  log_every_n_steps: 50
+  accumulate_grad_batches: 1  # Larger per-GPU batch, no gradient accumulation needed
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+
+# Model - AGGRESSIVE: More capacity to learn neighbor patterns
+model:
+  _target_: src.models.esm_tabular_module.EsmTabularModule
+  
+  # Architecture
+  tabular_dim: 35
+  esm_dim: 2560
+  hidden_dims: [1024, 512, 256]
+  dropout: 0.2
+
+  # Fusion
+  fusion_method: "concat"
+  fusion_dim: 512
+  modality_dropout_p: 0.1  # Force model to use both modalities
+  
+  # ⭐ Transformer aggregation mode
+  aggregation_mode: "transformer"
+  
+  # Transformer parameters - INCREMENTAL CAPACITY INCREASE
+  neighbor_attention_heads: 6  # Use projected dim (2400) -> head dim 400
+  neighbor_attention_layers: 2  # Keep at 2 layers (avoid massive param jump)
+  neighbor_attention_dim_ff: 1280  # Moderate increase from 1024 (+50%)
+  neighbor_attention_dropout: 0.2  # Keep strong regularization
+  distance_bias_type: "learned"
+  attention_pooling: "mean"
+  neighbor_attention_proj_dim: 2400  # Ensure divisibility by 6 heads
+  gate_penalty_weight: 0.18
+  gate_penalty_target: 0.8
+  gate_temperature: 2.0
+  gate_dropout_p: 0.2
+  gate_dropout_target: 0.8
+  neighbor_context_scale: 0.4
+  gate_penalty_start: 0.18
+  gate_penalty_end: 0.12
+  gate_dropout_start: 0.2
+  gate_dropout_end: 0.05
+  neighbor_context_scale_start: 0.4
+  neighbor_context_scale_end: 0.7
+  gate_schedule_epochs: 15
+  aux_neighbor_head_weight: 0.07
+  aux_neighbor_head_weight_start: 0.07
+  aux_neighbor_head_weight_end: 0.015
+  aux_neighbor_head_schedule_epochs: 10
+  aux_distance_temperature: 6.0
+  
+  # k-NN parameters
+  k_res_neighbors: 3
+  neighbor_weighting: "softmax"
+  neighbor_temp: 2.0
+  
+  # Output
+  num_classes: 1
+  loss_type: "bce"
+  initial_pos_prior: 0.0246
+  
+  # Optimizer
+  optimizer:
+    _target_: torch.optim.AdamW
+    _partial_: true
+    lr: 0.0001
+    weight_decay: 0.001  # Keep strong weight decay to prevent overfitting
+  
+  # Scheduler
+  scheduler:
+    _target_: torch.optim.lr_scheduler.OneCycleLR
+    _partial_: true
+    max_lr: 0.0005  # 5e-4: conservative for larger effective batch (640×3=1920)
+    pct_start: 0.2  # Reduced from 0.3: reach peak faster with larger batches
+    anneal_strategy: "cos"
+    div_factor: 25.0
+    final_div_factor: 10000.0
+
+# Logger
+logger:
+  wandb:
+    project: "fusion_pocknet_thesis"
+    name: "${hydra:job.num}_transformer_aggressive-${model.fusion_method}_${now:%H%M%S}"
+    tags:
+      - transformer
+      - aggressive
+      - attention
+      - knn3
+      - 6heads
+      - 2layers
+      - ff1280
+      - volta_gpus
+      - fusion
+      - ${model.loss_type}
+      - ${model.fusion_method}
+    group: "transformer_aggressive_${now:%Y%m%d}"
+    save_code: true
+    log_model: false
+    notes: "Aggressive transformer k-NN: 6 heads (proj 2400), 2 layers, FF=1280, gated residual, batch 640."
+
+# Callbacks
+callbacks:
+  imbalance_setup:
+    _target_: src.callbacks.imbalance_setup.ImbalanceSetup
+  
+  model_checkpoint:
+    monitor: "val/auprc"
+    mode: "max"
+    save_top_k: 3
+    save_last: true
+    filename: "epoch_{epoch:02d}-val_auprc_{val/auprc:.4f}"
+    dirpath: "${hydra:run.dir}/checkpoints"
+    verbose: true
+  
+  early_stopping:
+    monitor: "val/auprc"
+    mode: "max"
+    patience: 15  # Aggressive: stop quickly after peak (previous peaked ~epoch 27)
+    min_delta: 0.001
+    verbose: true
+  
+  learning_rate_monitor:
+    logging_interval: "step"
+    log_momentum: true
+
+# Hydra
+hydra:
+  job:
+    chdir: true

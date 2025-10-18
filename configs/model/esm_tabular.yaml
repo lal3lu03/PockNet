@@ -1,34 +1,37 @@
 # @package _global_
 
-# ESM + Tabular fusion model for binding site prediction
+# ESM + Tabular fusion model for binding site prediction with BCE
 model:
   _target_: src.models.esm_tabular_module.EsmTabularModule
 
   # Network architecture
-  tabular_dim: 45
-  esm_dim: 2560
+  tabular_dim: 35  # Matches current tabular feature set in the optimized H5
+  esm_dim: 2560    # ESM2-3B dimension
   hidden_dims: [1024, 512, 256]
   dropout: 0.2
 
   # Fusion strategy
-  fusion_method: "concat"  # Options: concat, attention, gated
+  fusion_method: "concat"  # Options: concat, attention, gated, film, late_logit
   fusion_dim: 512
 
-  # Output
-  num_classes: 2
+  # BCE Output (single logit for binary classification)
+  num_classes: 1
+  loss_type: "bce"            # "bce" | "focal" | "asl"
+  initial_pos_prior: 0.0253   # ~train prevalence; auto-updated by callback
 
   # Optimizer
   optimizer:
     _target_: torch.optim.AdamW
     _partial_: true
-    lr: 0.001
+    lr: 0.0005
     weight_decay: 0.01
 
-  # Scheduler  
+  # Scheduler - OneCycleLR for better convergence (dynamic total_steps)
   scheduler:
-    _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+    _target_: torch.optim.lr_scheduler.OneCycleLR
     _partial_: true
-    mode: "max"
-    factor: 0.5
-    patience: 10
-    verbose: true
+    max_lr: 0.003
+    pct_start: 0.3
+    anneal_strategy: "cos"
+    div_factor: 25.0
+    final_div_factor: 10000.0

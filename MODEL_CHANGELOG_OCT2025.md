@@ -1,0 +1,43 @@
+# Model Change Log – October 2025
+
+This document tracks the incremental changes applied to the transformer-based k-NN aggregation model and the resulting validation/test metrics. All runs use the dataset `data/h5/all_train_transformer_v2_optimized.h5` with k=3 neighbours.
+
+| Date & Run | Key Changes | Files Touched | Val AUPRC | Test AUPRC / Notes |
+|------------|-------------|---------------|-----------|--------------------|
+| 2025‑10‑13 – `training_stabilized_2025-10-13_20-24-12.log` | FP32 training, OneCycle max LR 1e-3, gradient clip 0.5, dropout 0.2 (baseline transformer v1). | `configs/experiment/fusion_transformer_complete.yaml` | 0.243 | 0.347 |
+| 2025‑10‑14 – `training_aggressive_2025-10-14_17-32-16.log` | Added learned residual gate, distance clamp to 30Å, batch 512/accum 2, neighbour attention 10h×FF1536. | `src/models/esm_tabular_module.py`, `configs/data/h5_transformer_aggregation.yaml`, `configs/experiment/fusion_transformer_aggressive.yaml` | **0.300** | **0.423** |
+| 2025‑10‑15 – (in-progress) | Switched to per-sample gate MLP, centre+context encoders, enhanced neighbour logging. Initial attempts failed during training due to incorrect dropout handling (null tensor). | `src/models/esm_tabular_module.py` | – | Run aborted (`TypeError: zeros_like`), fixed in subsequent commit. |
+| 2025‑10‑15 – `training_aggressive_2025-10-15_14-46-15.log` | Separate centre/context encoders, concatenate `[centre, blended]`, extended logging (alpha stats, neighbour norms). | `src/models/esm_tabular_module.py`, `configs/experiment/fusion_transformer_aggressive.yaml` | **0.308** | 0.417 (gate still high at ~0.98). |
+| 2025‑10‑15 – `training_aggressive_2025-10-15_20-23-58.log` | Gate clamped to [0.3, 0.7], added α min/max logging. | `src/models/esm_tabular_module.py` | 0.188 | 0.409 (gate centred ~0.70; val AUPRC dropped, test similar). |
+| 2025‑10‑16 – `training_aggressive_2025-10-16_09-04-10.log` | Soft penalty (`+0.02·|ᾱ-0.6|`), alpha logging. Penalty insufficient—α returned to ≈0.98. | `src/models/esm_tabular_module.py` | 0.269 | 0.417 |
+| 2025‑10‑16 – `training_aggressive_2025-10-16_14-11-48.log` | 6-head attention with 2400-D projection, batch 640 (no grad accumulation), added attention-entropy logging; gate penalty unchanged. | `src/models/neighbor_attention_encoder.py`, `src/models/esm_tabular_module.py`, `configs/model/esm_tabular_transformer.yaml`, `configs/data/h5_transformer_aggregation.yaml`, `configs/experiment/fusion_transformer_aggressive.yaml`, `launch_aggressive_training.sh` | 0.301 | 0.407 (α ≈ 1.0 despite penalty; neighbour context norm >> centre). |
+| 2025‑10‑16 – `training_aggressive_2025-10-16_16-49-24.log` | Stronger gate penalty (0.15), temperature 1.5, 25% gate dropout, normalized neighbour context. α settled near 0.55, attention entropy rose, context norm matched centre. | `src/models/esm_tabular_module.py`, `configs/model/esm_tabular_transformer.yaml`, `configs/experiment/fusion_transformer_aggressive.yaml`, `launch_aggressive_training.sh` | 0.298 | 0.428 (validation peaked early; late epochs drifted down when dropout remained high). |
+| 2025‑10‑16 – `training_aggressive_2025-10-16_21-09-46.log` | Introduced gate penalty/dropout/context-scale annealing (0.15→0.05, 25%→5%, 0.5→1.0 across 15 epochs). α held ~0.55; context scale ramped to 1.0; val AUPRC still peaked ≈0.291 and collapsed late. | `src/models/esm_tabular_module.py`, `configs/model/esm_tabular_transformer.yaml`, `configs/experiment/fusion_transformer_aggressive.yaml`, `launch_aggressive_training.sh` | 0.291 | 0.433 (final val degraded once LR small, but test AUPRC remained 0.433). |
+| 2025‑10‑17 – `training_aggressive_2025-10-17_12-48-47.log` | Added neighbour-only auxiliary head (weight 0.1) and switched trainer strategy to plain DDP. Run aborted immediately because DDP detected unused parameters; reverted to `ddp_find_unused_parameters_true`. | `src/models/esm_tabular_module.py`, `configs/model/esm_tabular_transformer.yaml`, `configs/experiment/fusion_transformer_aggressive.yaml`, `launch_aggressive_training.sh` | – | Run failed (DDP unused-parameter check). |
+| 2025‑10‑17 – `training_aggressive_2025-10-17_12-51-53.log` | Auxiliary neighbour head active (weight 0.1) with scheduled gate regularisation; DDP set back to find unused parameters. α≈0.545, aux loss ≈0.32, attention entropy dropped from ~0.54→0.27. Val AUPRC peaked at 0.294 (epoch 2) and finished at 0.267; test AUPRC 0.391. | `src/models/esm_tabular_module.py`, `configs/experiment/fusion_transformer_aggressive.yaml`, `launch_aggressive_training.sh` | 0.294 | 0.391 (aux head improved stability but late validation still trends down). |
+| 2025‑10‑17 – `training_aggressive_2025-10-17_16-31-52.log` | Aux head now distance-weighted and annealed (0.10→0.02); gate schedule unchanged. Validation tracked best 0.286 early but held 0.292 at epoch 30; test AUPRC rose to 0.444. Attention entropy recovered (~0.59) and aux loss shrank to 0.058. | `src/models/esm_tabular_module.py`, `configs/model/esm_tabular_transformer.yaml`, `configs/experiment/fusion_transformer_aggressive.yaml`, `launch_aggressive_training.sh` | 0.292 | 0.444 (late validation stabilised; still shy of the 0.30 target). |
+| 2025‑10‑17 – `training_aggressive_swa_2025-10-17_20-51-57.log` | First SWA attempt (max_epochs=40) – early stopping halted training at epoch 17 before SWA kicked in; val AUPRC best 0.297 (epoch 2), final 0.285. | `launch_aggressive_swa.sh` | 0.297 | 0.285 (same as non-SWA baseline; SWA phase never started). |
+| 2025‑10‑18 – `training_aggressive_swa_2025-10-17_23-30-27.log` | Relaunched SWA (60 epochs, patience stretched) from epoch‑02 checkpoint. SWA active epoch 20→30 with cosine window; aux head annealed. Val AUPRC peaked at **0.313** (during SWA) but ended 0.280; test AUPRC 0.414. Attention entropy settled ~0.30; aux loss ≈0.053. | `launch_aggressive_swa.sh`, `src/models/esm_tabular_module.py`, `configs/experiment/fusion_transformer_aggressive.yaml` | **0.313** | 0.414 (SWA delivered modest test gain yet val still below 0.30 target). |
+
+## Recent Structural Changes (Oct 16–17)
+
+1. **Scheduled gate regularisation**  
+   Penalty weight, dropout rate, and neighbour-context scale now anneal over the first `gate_schedule_epochs`, with per-epoch logging of `gate_w`, `gate_do`, and `ctx_scale`.
+
+2. **Neighbour-only auxiliary head**  
+   Optional lightweight classifier on the neighbour context provides an auxiliary BCE loss (weighted by `aux_neighbor_head_weight`) to keep attention gradients active when the main gate reduces neighbour signal.
+
+3. **Auxiliary scheduling & distance weighting**  
+   Auxiliary-head weight now anneals (start/end hyperparameters) and its loss is distance-weighted using neighbour minima so centre residues remain dominant.
+
+4. **SWa finetune launcher**  
+   Added `launch_aggressive_swa.sh` to run the aggressive experiment with an SWA finetuning phase (now 60 epochs, optional checkpoint resume).
+
+5. **DDP simplification**  
+   Trainer strategy switches to `ddp`, avoiding the extra traversal that was triggered by `find_unused_parameters=True`.
+
+## Next Planned Experiment
+
+1. Relaunch with the updated SWA script (60 epochs, no early stop) from the best checkpoint (`epoch=02-val_auprc=0.2973.ckpt`) so the SWA window actually runs; monitor whether val AUPRC surpasses 0.30.
+2. With SWA active, evaluate the late-epoch checkpoints vs. the pre-SWA baseline to confirm test gains >0.44 AUPRC transfer to validation.
+3. If gains plateau, experiment with a contrastive neighbour-vs-centre auxiliary objective or a modest increase in attention depth while keeping the scheduled gate/aux settings.

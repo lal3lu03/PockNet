@@ -1,0 +1,121 @@
+# @package _global_
+
+# Complete all_train.ds ESM2 + Tabular fusion training experiment
+# Uses protein-based splits: 740 non-BU48 proteins for train/val, 48 BU48 proteins for test
+
+defaults:
+  - override /data: h5_knn_enabled
+  - override /model: esm_tabular
+  - override /callbacks: default
+  - override /trainer: gpu
+  - override /logger: wandb
+
+task_name: "fusion_all_train_complete"
+tags: ["esm2", "tabular", "fusion", "complete", "all_train", "bu48_test", "attention"]
+
+seed: 42
+
+# Training configuration
+train: true
+test: true
+
+# Trainer optimized for 8×Tesla P100 GPUs with memory efficiency
+trainer:
+  min_epochs: 5
+  max_epochs: 100
+  gradient_clip_val: 1.0
+  devices: 4  # Use 4 GPUs (simplified syntax)
+  strategy: "ddp"
+  precision: "16-mixed"
+  log_every_n_steps: 50
+  accumulate_grad_batches: 4  # Increased to compensate for smaller batch size
+  val_check_interval: 1.0     # Reduced validation frequency to save memory
+  check_val_every_n_epoch: 1
+
+# Model configuration - Complete override for BCE with k-NN ESM support
+model:
+  _target_: src.models.esm_tabular_module.EsmTabularModule
+
+  # Network architecture
+  tabular_dim: 35  # Updated to match our actual H5 features
+  esm_dim: 2560    # ESM2-3B dimension (unchanged - k-NN aggregation maintains same dim)
+  hidden_dims: [1024, 512, 256]
+  dropout: 0.2
+
+  # Fusion strategy
+  fusion_method: "concat"  # Options: concat, attention, gated, film, late_logit
+  fusion_dim: 512
+  modality_dropout_p: 0.0     # Modality dropout probability (0.0-0.2 for robustness)
+
+  # k-NN ESM configuration - NEW FEATURE (Dataset-level aggregation implemented)
+  k_res_neighbors: 3          # Number of nearest residues to aggregate (1, 2, 3)
+  neighbor_weighting: "softmax"  # Aggregation method: softmax, inverse, uniform
+  neighbor_temp: 2.0          # Temperature for softmax weighting (Angstroms)
+  
+  # BCE Output (single logit)
+  num_classes: 1
+  loss_type: "bce"            # "bce" | "focal" | "asl"
+  initial_pos_prior: 0.0246   # Updated to match verified 2.46% prevalence
+
+  # Optimizer
+  optimizer:
+    _target_: torch.optim.AdamW
+    _partial_: true
+    lr: 0.0001
+    weight_decay: 0.01
+  
+  # Scheduler - OneCycleLR parameters (dynamic total_steps calculation)
+  scheduler:
+    _target_: torch.optim.lr_scheduler.OneCycleLR
+    _partial_: true
+    max_lr: 0.003
+    pct_start: 0.3
+    anneal_strategy: "cos"
+    div_factor: 25.0
+    final_div_factor: 10000.0
+
+# Logger configuration - Enhanced for thesis data collection
+logger:
+  wandb:
+    project: "fusion_pocknet_thesis"
+    name: "${hydra:job.num}_${model.loss_type}-${model.fusion_method}_${now:%H%M%S}"
+    tags: 
+      - shared_memory
+      - 8gpu
+      - fusion
+      - ${model.loss_type}
+      - ${model.fusion_method}
+    group: "fusion_sweep_${now:%Y%m%d}"
+    save_code: true
+    log_model: false  # Disable model logging for performance
+    notes: "Protein-based splits: 740 non-BU48 proteins for train/val, 48 BU48 proteins for test. ESM2-3B + 39 tabular features. Memory efficient: load once, share across 8 GPUs."
+
+# Callbacks - Updated to monitor AUPRC as primary metric for imbalanced data
+callbacks:
+  imbalance_setup:
+    _target_: src.callbacks.imbalance_setup.ImbalanceSetup
+  
+  model_checkpoint:
+    monitor: "val/auprc"  # AUPRC is most stable under severe class imbalance
+    mode: "max"
+    save_top_k: 3
+    save_last: true
+    filename: "epoch_{epoch:02d}-val_auprc_{val/auprc:.4f}"
+    dirpath: "${hydra:run.dir}/checkpoints"  # Isolated checkpoints per run
+    verbose: true
+  
+  early_stopping:
+    monitor: "val/auprc"  # Monitor AUPRC for early stopping
+    mode: "max"
+    patience: 40  # Increased patience for AUPRC convergence
+    min_delta: 0.001
+    verbose: true
+  
+  learning_rate_monitor:
+    logging_interval: "step"
+    log_momentum: true
+
+# Hydra configuration
+hydra:
+  job:
+    chdir: true

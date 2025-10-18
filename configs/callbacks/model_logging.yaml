@@ -1,0 +1,7 @@
+_target_: src.callbacks.model_logging_callback.ModelLoggingCallback
+
+# Additional configuration for IoU-focused monitoring
+# Uncomment the lines below if you want to monitor IoU instead of AUROC:
+
+# monitor_iou: true  # Set to true to monitor val/iou instead of val/auroc
+# iou_patience: 50   # Patience for IoU-based early stopping (lower than AUROC since IoU can be more noisy)

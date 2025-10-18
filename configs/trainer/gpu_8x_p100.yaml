@@ -1,0 +1,70 @@
+# @package trainer
+
+defaults:
+  - default
+
+# 8×P100 DDP Configuration for ESM2+PockNet Training
+# Optimized for 8 NVIDIA P100 GPUs (16GB each) with DDP
+
+_target_: lightning.pytorch.trainer.Trainer
+
+# Hardware configuration
+accelerator: gpu
+devices: 8  # Use all 8 P100 GPUs
+num_nodes: 1
+strategy: ddp_find_unused_parameters_true
+
+# Memory and performance optimizations
+sync_batchnorm: true
+enable_checkpointing: true
+gradient_clip_val: 1.0
+gradient_clip_algorithm: norm
+
+# Training duration (adjusted for large-scale training)
+min_epochs: 5
+max_epochs: 200
+
+# Validation and monitoring
+check_val_every_n_epoch: 2  # Validate every 2 epochs (saves time)
+val_check_interval: 0.5  # Also check at 50% of each epoch
+
+# Precision settings (mixed precision for memory efficiency)
+precision: 16-mixed  # Use mixed precision to fit larger models
+
+# Logging and profiling
+log_every_n_steps: 100  # Log less frequently to reduce overhead
+enable_progress_bar: true
+enable_model_summary: true
+
+# Debugging and reproducibility
+deterministic: false  # Set to true for reproducible results (slower)
+benchmark: true  # Optimize for consistent input shapes
+
+# Checkpoint strategy
+default_root_dir: ${paths.output_dir}
+
+# Advanced DDP settings
+# Note: These are configured via environment variables or strategy parameters
+
+# Callbacks (will be overridden by experiment config)
+callbacks: []
+
+# Additional trainer arguments for large-scale training
+detect_anomaly: false  # Disable for performance
+profiler: null  # Can be enabled for debugging: simple, advanced, pytorch
+
+# Fast development run (disable for production)
+fast_dev_run: false
+# overfit_batches: 0.01  # Uncomment for debugging
+
+# Performance monitoring
+limit_train_batches: 1.0  # Use full dataset
+limit_val_batches: 1.0
+limit_test_batches: 1.0
+
+# Memory management
+max_epochs: 200
+accumulate_grad_batches: 1  # Increase if you need larger effective batch size
+
+# For very large models, you might want to enable:
+# replace_sampler_ddp: true

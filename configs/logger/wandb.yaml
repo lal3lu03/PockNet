@@ -7,10 +7,16 @@ wandb:
   offline: False
   id: null # pass correct id to resume experiment!
   anonymous: null # enable anonymous logging
-  project: "PockNet"
+  project: "fusion_pocknet_thesis"
   log_model: False  # disable checkpoint upload; metrics, configs, and gradients still logged
   prefix: "" # a string to put at the beginning of metric keys
   # entity: "" # set to name of your wandb team
-  group: "pocknet_experiments"
-  tags: ${tags}
+  group: "fusion_sweep_${now:%Y%m%d}"
+  name: "${hydra:job.num}_${model.loss_type}-${model.fusion_method}_${now:%H%M%S}"
+  tags: 
+    - shared_memory
+    - 8gpu
+    - fusion
+    - ${model.loss_type}
+    - ${model.fusion_method}
   job_type: "training"

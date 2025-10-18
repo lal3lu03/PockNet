@@ -1,19 +1,18 @@
-# Byte-compiled / optimized / DLL files
+# -----------------------------------------------------------------------------
+# Python bytecode and build artefacts
+# -----------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
 
-# Distribution / packaging
 .Python
 build/
-develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
+develop-eggs/
 lib/
 lib64/
 parts/
@@ -23,111 +22,56 @@ wheels/
 pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.installed.cfg
 MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.venv
+# -----------------------------------------------------------------------------
+# Virtual environments
+# -----------------------------------------------------------------------------
+.venv/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
-.spyderproject
-.spyproject
+# -----------------------------------------------------------------------------
+# Packaging / installers / PyInstaller
+# -----------------------------------------------------------------------------
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
+# -----------------------------------------------------------------------------
+# Testing, coverage, and type checkers
+# -----------------------------------------------------------------------------
+.tox/
+.nox/
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
 
-### VisualStudioCode
+# -----------------------------------------------------------------------------
+# Documentation and site builds
+# -----------------------------------------------------------------------------
+docs/_build/
+/site/
+
+# -----------------------------------------------------------------------------
+# IDE / Editor settings
+# -----------------------------------------------------------------------------
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -135,53 +79,56 @@ dmypy.json
 !.vscode/extensions.json
 *.code-workspace
 **/.vscode
-
-# JetBrains
 .idea/
+.spyderproject
+.spyproject
+.ropeproject
 
-# Data & Models
-*.h5
+# -----------------------------------------------------------------------------
+# Notebook checkpoints
+# -----------------------------------------------------------------------------
+.ipynb_checkpoints/
+
+# -----------------------------------------------------------------------------
+# Environment and tooling
+# -----------------------------------------------------------------------------
+.env
+.python-version
+.aim
+
+# -----------------------------------------------------------------------------
+# Runtime logs, checkpoints, and large binaries
+# -----------------------------------------------------------------------------
+*.log
+*.ckpt
+*.pt
+*.pkl
+*.pkl.gz
 *.tar
 *.tar.gz
 *.zip
-*.pkl
-*.pkl.gz
+*.h5
 *.pdb
-*.ckpt
+wandb/
 
-# Lightning-Hydra-Template
-configs/local/default.yaml
+# Local run artefacts in repository root
+/training_*.log
+/training_aggressive*.log
+/training_aggressive_swa*.log
+/eval_*.log
+
+# -----------------------------------------------------------------------------
+# Generated data and experiment outputs
+# -----------------------------------------------------------------------------
 /data/
 /logs/
-.env
+/runs/
+wandb/
+deprecated/
 
-# Aim logging
-.aim
+# Shell history (created in repo root during remote sessions)
+bash_history
+bash_history.pretty.txt
 
-
-# Add to /system/user/studentwork/hageneder/MSC/Practical_work/PockNet/.gitignore
-
-# === PockNet Data Generation ===
-# P2Rank specific files
-PockNet_datageneration/p2rank/*.iml
-PockNet_datageneration/p2rank/*.ipr  
-PockNet_datageneration/p2rank/*.iws
-PockNet_datageneration/p2rank/*.class
-PockNet_datageneration/p2rank/logs/*
-PockNet_datageneration/p2rank/*.log
-PockNet_datageneration/p2rank/out/*
-PockNet_datageneration/p2rank/*.stackdump
-PockNet_datageneration/p2rank/local*
-!PockNet_datageneration/p2rank/*.pdb
-!PockNet_datageneration/p2rank/lib/*
-!PockNet_datageneration/p2rank/*.md
-PockNet_datageneration/p2rank/distro/log/*
-
-# Data generation outputs (large files)
-PockNet_datageneration/output*/
-PockNet_datageneration/out_*/
-PockNet_datageneration/chen11_test_prep/
-PockNet_datageneration/wandb/
-PockNet_datageneration/*.log
-!PockNet_datageneration/out_test/
-!PockNet_datageneration/out_train/
+todos.txt
+CLEANUP_SUMMARY.md
