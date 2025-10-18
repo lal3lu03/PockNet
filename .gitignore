@@ -120,8 +120,10 @@ wandb/
 # -----------------------------------------------------------------------------
 # Generated data and experiment outputs
 # -----------------------------------------------------------------------------
-/data/
-/logs/
+/data/*
+!/data/README.md
+/logs/*
+!/logs/README.md
 /runs/
 wandb/
 deprecated/
