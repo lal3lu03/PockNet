@@ -19,12 +19,12 @@ seed: 42
 train: true
 test: true
 
-# Trainer optimized for 3×Volta GPUs with incremental capacity increase
+# Trainer configured for all available GPUs with incremental capacity increase
 trainer:
   min_epochs: 5
   max_epochs: 80  # Reduced: previous run peaked ~epoch 27, stop earlier
   gradient_clip_val: 0.5
-  devices: 3
+  devices: -1
   strategy: "ddp_find_unused_parameters_true"
   precision: "32-true"
   sync_batchnorm: true
@@ -59,18 +59,18 @@ model:
   distance_bias_type: "learned"
   attention_pooling: "mean"
   neighbor_attention_proj_dim: 2400  # Ensure divisibility by 6 heads
-  gate_penalty_weight: 0.18
-  gate_penalty_target: 0.8
+  gate_penalty_weight: 0.16
+  gate_penalty_target: 0.75
   gate_temperature: 2.0
-  gate_dropout_p: 0.2
-  gate_dropout_target: 0.8
-  neighbor_context_scale: 0.4
-  gate_penalty_start: 0.18
-  gate_penalty_end: 0.12
-  gate_dropout_start: 0.2
-  gate_dropout_end: 0.05
-  neighbor_context_scale_start: 0.4
-  neighbor_context_scale_end: 0.7
+  gate_dropout_p: 0.25
+  gate_dropout_target: 0.65
+  neighbor_context_scale: 0.45
+  gate_penalty_start: 0.16
+  gate_penalty_end: 0.10
+  gate_dropout_start: 0.25
+  gate_dropout_end: 0.15
+  neighbor_context_scale_start: 0.45
+  neighbor_context_scale_end: 0.55
   gate_schedule_epochs: 15
   aux_neighbor_head_weight: 0.07
   aux_neighbor_head_weight_start: 0.07

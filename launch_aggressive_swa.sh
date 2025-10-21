@@ -39,7 +39,8 @@ echo ""
 echo "📊 Training Plan:"
 echo "   • Base experiment: fusion_transformer_aggressive"
 echo "   • SWA starts at epoch 20 with a 10-epoch cosine window"
-echo "   • Aux head weight anneals 0.10 → 0.02; distance weighting enabled"
+echo "   • Aux head weight anneals 0.07 → 0.015; distance weighting enabled"
+echo "   • Gate penalty relaxes 0.16 → 0.08, dropout target 0.60, context scale 0.45 → 0.60"
 echo "   • Trainer capped at 60 epochs (no early stop)"
 echo ""
 
@@ -55,23 +56,55 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo ""
 echo "📊 GPU Status:"
-nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv,noheader,nounits | \
-    awk -F, '{printf "GPU %s: %s (%.0f GB free / %.0f GB total)\n", $1, $2, $4/1024, $3/1024}'
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null || \
+    echo "⚠️  nvidia-smi available but could not query devices."
+else
+  echo "⚠️  nvidia-smi not found on PATH."
+fi
 
-export CUDA_VISIBLE_DEVICES=1,3,4
+GPU_COUNT=$(python - <<'PY' 2>/dev/null || echo "0"
+import torch
+print(torch.cuda.device_count() if torch.cuda.is_available() else 0)
+PY
+)
+if [[ "$GPU_COUNT" =~ ^[0-9]+$ ]] && [[ "$GPU_COUNT" -gt 0 ]]; then
+  GPU_MSG="torch.cuda reports ${GPU_COUNT} visible GPU(s)"
+else
+  GPU_MSG="torch.cuda could not detect GPUs (Lightning will use defaults)"
+fi
 
 echo ""
 echo "🚀 Launching training with SWA finetune..."
+echo "   $GPU_MSG"
 echo "   Log file prefix: training_aggressive_swa_(timestamp).log"
 echo ""
 
-tmux new-session -d -s "$SESSION_NAME" bash -c "cd \"$ROOT_DIR\" && export PROJECT_ROOT=\"$ROOT_DIR\" && export CUDA_VISIBLE_DEVICES=1,3,4 && $TRAIN_CMD"
+# Build run command
+RUN_CMD="cd \"$ROOT_DIR\" && export PROJECT_ROOT=\"$ROOT_DIR\" && $TRAIN_CMD"
+USED_TMUX=0
 
-echo "✅ Training launched in tmux session '$SESSION_NAME'"
-echo ""
-echo "📊 Monitor with:"
-echo "   tmux attach -t $SESSION_NAME"
-echo "   tail -f training_aggressive_swa_*.log"
-echo ""
+if command -v tmux >/dev/null 2>&1; then
+  if tmux new-session -d -s "$SESSION_NAME" bash -c "$RUN_CMD"; then
+    echo "✅ Training launched in tmux session '$SESSION_NAME'"
+    USED_TMUX=1
+  else
+    echo "⚠️ tmux launch failed. Running training inline instead."
+    bash -c "$RUN_CMD"
+  fi
+else
+  echo "⚠️ tmux not found. Running training inline."
+  bash -c "$RUN_CMD"
+fi
+
+if [[ "$USED_TMUX" -eq 1 ]]; then
+  echo "📊 Monitor with:"
+  echo "   tmux attach -t $SESSION_NAME"
+  echo "   tail -f training_aggressive_swa_*.log"
+  echo ""
+else
+  echo "📊 Monitor with: tail -f training_aggressive_swa_*.log"
+  echo ""
+fi
 echo "🔍 W&B Dashboard:"
 echo "   https://wandb.ai/max-hageneder-johannes-kepler-universit-t-linz/fusion_pocknet_thesis"

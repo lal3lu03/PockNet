@@ -339,6 +339,7 @@ class EsmTabularModule(LightningModule):
             neighbor_context_scale_start if neighbor_context_scale_start is not None else neighbor_context_scale
         )
         self._gate_schedule_epochs = max(int(gate_schedule_epochs), 0)
+        self._last_console_epoch = -1
         self._gate_penalty_start = (
             float(gate_penalty_start)
             if gate_penalty_start is not None else float(gate_penalty_weight)
@@ -996,8 +997,12 @@ class EsmTabularModule(LightningModule):
                 batch_size=batch_size,
             )
         
-        # Console summary on rank 0 for easier monitoring
+        # Console summary on rank 0 for easier monitoring (skip during sanity checks)
         if getattr(self.trainer, "is_global_zero", False):
+            if getattr(self.trainer, "sanity_checking", False):
+                return
+            if self._last_console_epoch >= self.current_epoch:
+                return
             train_loss = self.trainer.callback_metrics.get("train/loss_epoch")
             val_loss = self.trainer.callback_metrics.get("val/loss")
             parts = [f"[epoch {self.current_epoch:03d}]"]
@@ -1008,6 +1013,8 @@ class EsmTabularModule(LightningModule):
             parts.append(f"val_auprc={float(auprc_val):.4f}")
             parts.append(f"val_auroc={float(auroc_val):.4f}")
             parts.append(f"val_f1={float(f1):.4f}")
+            parts.append(f"val_iou={best_iou:.4f}")
+            parts.append(f"thr={best_thr:.2f}")
             if alpha_mean is not None:
                 parts.append(f"alpha={float(alpha_mean):.3f}")
             parts.append(f"gate_w={self._gate_penalty_current:.3f}")
@@ -1019,6 +1026,7 @@ class EsmTabularModule(LightningModule):
             if aux_epoch is not None:
                 parts.append(f"aux={float(aux_epoch):.3f}")
             self.print(" ".join(parts))
+            self._last_console_epoch = self.current_epoch
 
     def on_test_epoch_start(self):
         self._test_probs, self._test_labels = [], []
