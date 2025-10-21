@@ -3,6 +3,8 @@
 
 set -e
 
+EXPERIMENT=${EXPERIMENT_OVERRIDE:-fusion_transformer_aggressive}
+
 SESSION_NAME="transformer_training_swa"
 CKPT_PATH=${1:-}
 if [[ -n "$CKPT_PATH" && ! -f "$CKPT_PATH" ]]; then
@@ -11,7 +13,7 @@ if [[ -n "$CKPT_PATH" && ! -f "$CKPT_PATH" ]]; then
 fi
 
 OVERRIDES=(
-  experiment=fusion_transformer_aggressive
+  experiment=$EXPERIMENT
   trainer.max_epochs=60
   callbacks.early_stopping.patience=1000
   +callbacks.swa._target_=lightning.pytorch.callbacks.StochasticWeightAveraging
@@ -37,7 +39,7 @@ echo "🚀 Aggressive Transformer + SWA Training"
 echo "=========================================="
 echo ""
 echo "📊 Training Plan:"
-echo "   • Base experiment: fusion_transformer_aggressive"
+echo "   • Base experiment: ${EXPERIMENT}"
 echo "   • SWA starts at epoch 20 with a 10-epoch cosine window"
 echo "   • Aux head weight anneals 0.07 → 0.015; distance weighting enabled"
 echo "   • Gate penalty relaxes 0.16 → 0.08, dropout target 0.60, context scale 0.45 → 0.60"

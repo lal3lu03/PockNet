@@ -5,6 +5,8 @@
 
 set -e
 
+EXPERIMENT=${EXPERIMENT_OVERRIDE:-fusion_transformer_aggressive}
+
 echo "=========================================="
 echo "🚀 Aggressive Transformer k-NN Training"
 echo "=========================================="
@@ -66,13 +68,13 @@ fi
 
 echo ""
 echo "🚀 Launching aggressive transformer training..."
-echo "   Experiment: fusion_transformer_aggressive"
+echo "   Experiment: ${EXPERIMENT}"
 echo "   $GPU_MSG"
 echo "   Log prefix: training_aggressive_(timestamp).log"
 echo ""
 
 # Build run command
-RUN_CMD="cd \"$ROOT_DIR\" && export PROJECT_ROOT=\"$ROOT_DIR\" && python src/train.py experiment=fusion_transformer_aggressive 2>&1 | tee training_aggressive_\$(date +%F_%H-%M-%S).log"
+RUN_CMD="cd \"$ROOT_DIR\" && export PROJECT_ROOT=\"$ROOT_DIR\" && python src/train.py experiment=${EXPERIMENT} 2>&1 | tee training_aggressive_\$(date +%F_%H-%M-%S).log"
 USED_TMUX=0
 
 # Launch in tmux when available, otherwise run inline
