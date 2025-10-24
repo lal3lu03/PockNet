@@ -759,6 +759,8 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         enable_knn: bool = False,
         k_max: int = 3,
         pdb_base_dir: str = None,
+        hard_positive_indices_path: Optional[str] = None,
+        hard_positive_repeat: int = 1,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -786,6 +788,17 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         self.enable_knn = enable_knn
         self.k_max = k_max
         self.pdb_base_dir = pdb_base_dir
+
+        # Hard-example replay parameters
+        if hard_positive_indices_path:
+            hard_path = Path(hard_positive_indices_path)
+            if not hard_path.is_absolute():
+                hard_path = project_root / hard_path
+            self.hard_positive_indices_path = hard_path
+        else:
+            self.hard_positive_indices_path = None
+        self.hard_positive_repeat = int(max(1, hard_positive_repeat))
+        self._hard_positive_selected = 0
         
         # Will be populated during setup
         self.shared_tensors = None
@@ -873,6 +886,7 @@ class TrueSharedMemoryDataModule(LightningDataModule):
             
             log.info(f"H5 splits — Train: {len(self.train_indices)}, "
                     f"Val: {len(self.val_indices)}, Test: {len(self.test_indices)}")
+            self._apply_hard_positive_replay()
             return
         
         # Fallback to BU48-based protein splits
@@ -925,6 +939,56 @@ class TrueSharedMemoryDataModule(LightningDataModule):
             log.info("Note: This is expected with chain-level embeddings where different chains from the same PDB are in different splits.")
         else:
             log.info("✅ Verified: No BU48 in train/val and no train↔val protein overlap.")
+
+        self._apply_hard_positive_replay()
+    
+    def _apply_hard_positive_replay(self):
+        """Optionally replicate hard positive examples to emphasize them during training."""
+        if self.hard_positive_indices_path is None:
+            return
+        path = self.hard_positive_indices_path
+        if not path.exists():
+            log.warning(f"Hard-positive indices file not found: {path}")
+            return
+        try:
+            with open(path, "r") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict) and "indices" in payload:
+                hard_indices = payload["indices"]
+            else:
+                hard_indices = payload
+            hard_array = np.array(hard_indices, dtype=np.int64)
+        except Exception as e:
+            log.warning(f"Failed to load hard-positive indices from {path}: {e}")
+            return
+        if hard_array.size == 0:
+            log.info(f"Hard-positive file {path} is empty; skipping replay.")
+            return
+        if self.train_indices is None or self.train_indices.size == 0:
+            log.warning("Training indices not initialised; skipping hard-positive replay.")
+            return
+        selected = np.intersect1d(hard_array, self.train_indices, assume_unique=False)
+        if selected.size == 0:
+            log.info(f"No hard-positive indices overlap with training split (file: {path}).")
+            return
+        # Repeat each selected index hard_positive_repeat-1 additional times
+        repeat_factor = self.hard_positive_repeat
+        if repeat_factor <= 1:
+            log.info(
+                f"Hard-positive list provided ({path}), but repeat factor <=1; keeping original sampling."
+            )
+            self._hard_positive_selected = selected.size
+            return
+        extras = np.repeat(selected, repeat_factor - 1)
+        augmented = np.concatenate([self.train_indices, extras])
+        rng = np.random.default_rng(self.val_split_seed + 17)
+        rng.shuffle(augmented)
+        self.train_indices = augmented.astype(np.int64, copy=False)
+        self._hard_positive_selected = selected.size
+        log.info(
+            f"Hard-positive replay: using {selected.size} base indices (repeat={repeat_factor}) "
+            f"→ added {extras.size} extra samples. New train size: {len(self.train_indices)}"
+        )
     
     def train_dataloader(self):
         """Create training dataloader with DistributedSampler."""

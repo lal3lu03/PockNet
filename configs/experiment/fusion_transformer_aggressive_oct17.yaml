@@ -114,6 +114,9 @@ logger:
 callbacks:
   imbalance_setup:
     _target_: src.callbacks.imbalance_setup.ImbalanceSetup
+    override_pos_weight: true
+    override_bias: true
+    manual_pos_weight: null
 
   model_checkpoint:
     monitor: "val/auprc"

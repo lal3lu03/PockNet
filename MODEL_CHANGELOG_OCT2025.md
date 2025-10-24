@@ -23,6 +23,9 @@ This document tracks the incremental changes applied to the transformer-based k-
 | 2025‑10‑20 – `training_aggressive_swa_2025-10-20_20-37-58.log` | SWA resumed from epoch‑14 checkpoint with 10-epoch window (start=20). Averaging tracked the plateau briefly (val AUPRC 0.301) but drifted down to 0.274 as α climbed >0.66; test AUPRC remained 0.424. | `launch_aggressive_swa.sh`, `src/models/esm_tabular_module.py` | 0.301 | 0.424 (averaged model underperforms snapshot; consider later SWA start & shorter window). |
 | 2025‑10‑21 – `training_aggressive_2025-10-21_12-48-11.log` | Reproduced Oct‑17 config on all 4 GPUs (devices=-1, DDP find unused). Hit val AUPRC **0.313** at epoch 09 (checkpoint `epoch_09-val_auprc_0.3132.ckpt`); validation collapsed after gate penalty finished annealing, finishing at 0.138. Test AUPRC 0.437. | `configs/experiment/fusion_transformer_aggressive_oct17.yaml`, `launch_aggressive_training.sh` | **0.313** | 0.437 (best checkpoint recaptured; use for SWA reproduction). |
 | 2025‑10‑21 – `training_aggressive_swa_2025-10-21_15-16-28.log` | SWA rerun from epoch 09 checkpoint (start=20, window=10). Val AUPRC peaked at 0.3019 during averaging but settled at 0.291; test AUPRC 0.437. Console logs confirmed IoU≈0.23 for the best SWA snapshot. | `launch_aggressive_swa.sh`, `configs/experiment/fusion_transformer_aggressive_oct17.yaml` | 0.302 | 0.437 (SWA still trails the 0.313 snapshot; need later start & shorter window). |
+| 2025‑10‑23 – `blend_selective_swa_epoch09_12.log` | Selective SWA blend (50/50) of epoch 09 baseline + finetune epoch 12. Test-only evaluation on blended weights. | `scripts/blend_checkpoints.py`, `blend.sh` | – | **0.445** (best test AUPRC to date; consider weight sweeps & late-start SWA from blended checkpoint). |
+| 2025‑10‑23 – `training_aggressive_swa_2025-10-23_20-44-45.log` | Short SWA finetune (start=26, window=6) from the 50/50 blend with manual `pos_weight=45`. Validation peaked at 0.3056 around the SWA start, then slid to 0.274 by epoch 31; test AUPRC climbed to 0.446 with recall 0.61. | `launch_aggressive_swa.sh`, `src/callbacks/imbalance_setup.py`, `configs/experiment/fusion_transformer_aggressive_oct17.yaml` | 0.306 (peak) | 0.446 (final SWA checkpoint; val drift suggests over-weighted positives). |
+| 2025‑10‑24 – `training_aggressive_swa_2025-10-24_16-28-04.log` | Short SWA rerun with hard-positive replay (`train_hard_pos.json`, repeat = 3) and manual `pos_weight=45`. Validation briefly hit **0.3126** at epoch 26 but averaged down to 0.2796 by epoch 31; test AUPRC stayed at 0.446 with recall 0.61 while attention entropy increased to 0.52. | `launch_aggressive_swa.sh`, `scripts/extract_hard_examples.py`, `src/data/shared_memory_datamodule_v2.py` | **0.313** (peak) | 0.446 (final SWA checkpoint still lags the pre-SWA snapshot; stronger weighting may be required). |
 
 ## Recent Structural Changes (Oct 16–17)
 
@@ -41,8 +44,9 @@ This document tracks the incremental changes applied to the transformer-based k-
 5. **DDP simplification**  
    Trainer strategy switches to `ddp`, avoiding the extra traversal that was triggered by `find_unused_parameters=True`.
 
-## Next Planned Experiment
+## Next Planned Experiments
 
-1. Relaunch with the updated SWA script (60 epochs, no early stop) from the best checkpoint (`epoch=02-val_auprc=0.2973.ckpt`) so the SWA window actually runs; monitor whether val AUPRC surpasses 0.30.
-2. With SWA active, evaluate the late-epoch checkpoints vs. the pre-SWA baseline to confirm test gains >0.44 AUPRC transfer to validation.
-3. If gains plateau, experiment with a contrastive neighbour-vs-centre auxiliary objective or a modest increase in attention depth while keeping the scheduled gate/aux settings.
+1. Evaluate the best pre-SWA snapshot from 2025‑10‑24 (e.g. `logs/fusion_transformer_aggressive/runs/2025-10-24_16-28-21/checkpoints/epoch_26-val_auprc_0.3126.ckpt`) to log its standalone val/test metrics.
+2. Blend the epoch‑26 checkpoint with the finetuned/SWA weights (`./blend.sh --inputs <epoch26> <swa> ...`) and sweep ratios to see if the 0.3126 validation peak can be preserved while holding ≥0.445 test AUPRC.
+3. If validation still stalls, explore a focal-loss warm-up or partial bias schedule before SWA, reusing the mined hard-positive list.
+4. Launch another short SWA finetune with a higher manual class weight (e.g. `./launch_aggressive_swa.sh --preset short --pos-weight 50 --hard-pos logs/hard_examples/train_hard_pos.json --hard-repeat 3 --ckpt <blend.ckpt> --swa-lr 0.0001`) and compare both the pre-SWA peak and final averaged checkpoint against the previous run.

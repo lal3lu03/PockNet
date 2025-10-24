@@ -34,3 +34,7 @@ pdb_base_dir: "data/p2rank-datasets"
 
 # Transform configuration (optional)
 transform: null
+
+# Hard-positive replay (optional)
+hard_positive_indices_path: null
+hard_positive_repeat: 1
