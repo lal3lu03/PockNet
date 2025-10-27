@@ -12,22 +12,28 @@ The post-processing pipeline transforms raw residue probability scores into biol
 4. **Cluster filtering** (size ≥ 5, ∑p ≥ 2.0)
 5. **Pocket scoring** and ranking
 
-## Enhanced Pipeline Workflow
+## Production Pipeline (P2Rank Style)
 
-An end-to-end, state-of-the-art workflow is available via the enhanced pipeline. It performs shared-memory inference, multi-checkpoint ensembling, adaptive pocket formation, and rich reporting in a single command.
+The primary entry point is the lightweight production runner which mirrors
+P2Rank’s pocket aggregation while consuming PockNet predictions.
 
-### Run the enhanced pipeline
+### Run the production pipeline
 
 ```bash
-python -m post_processing.run_enhanced_pipeline --config post_processing/configs/sota_default.yaml
+python -m post_processing.run_production_pipeline \
+  --checkpoint logs/fusion_all_train_complete/.../checkpoints/epoch=XX.ckpt \
+  --h5 data/h5/pocknet_with_esm2_3b.h5 \
+  --csv data/vectorsTrain_all_chainfix_filtered.csv \
+  --threshold-grid auto \
+  --output post_processing_results/p2rank_production
 ```
 
-- **Configuration** – edit the YAML file to point to your checkpoints, dataset (`h5_file`), and output directory. All EnhancedConfig options are exposed under the `enhanced` key.
-- **Path handling** – any relative paths in the YAML are resolved relative to the configuration file itself, keeping configs portable across machines.
-- **Results** – the pipeline writes structured artefacts under `post_processing_results/`, including per-protein folders, PyMOL scripts, and a `summary/` directory with machine-friendly metrics.
-- **Dry run** – append `--dry-run` to validate the configuration without performing inference (useful for CI).
+- **Threshold sweep** – pass `--threshold-grid auto` (0.10–0.90) or a comma-list to evaluate IoU-sensitive cut-offs.
+- **Outputs** – P2Rank-compatible `pockets.csv` files are written under `cases/`, with aggregate metrics in `summary/summary.csv` and `summary/threshold_sweep.csv`.
+- **Dependencies** – requires the standard library stack plus `scikit-learn` for IoU scoring; PyMOL rendering is not yet automated.
 
-`advanced_post_processing.py` now delegates to this entry point for backwards compatibility.
+Legacy orchestration scripts (enhanced/advanced/complete pipelines) have been
+archived under `deprecated/post_processing/`.
 
 ## Installation
 
@@ -114,9 +120,14 @@ post_processing/
 ├── ensemble.py          # Multi-seed ensembling utilities
 ├── inference.py         # Model loading and prediction
 ├── metrics.py           # Pocket-level evaluation metrics
+├── pipeline.py          # High-level orchestration helpers
+├── pocket_formation.py  # Residue-to-pocket conversion primitives
+├── p2rank_like.py       # P2Rank-inspired clustering/scoring logic
+├── run_production_pipeline.py  # CLI entry point for production runs
 ├── sweep.py             # Hyperparameter optimization
-├── example_usage.py     # Usage examples
 └── notebook_integration.py  # Integration with notebook analysis
+
+Archived scripts live in `deprecated/post_processing/`.
 ```
 
 ## Core Components

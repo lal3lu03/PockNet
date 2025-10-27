@@ -11,17 +11,30 @@ the original Groovy pipeline.
 from __future__ import annotations
 
 import csv
-import io
 import logging
 import pickle
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import h5py
 import numpy as np
 
+from .score_transformers import ScoreTransformer
+
 logger = logging.getLogger(__name__)
+
+try:
+    from scipy.spatial import cKDTree, ConvexHull
+    try:  # SciPy >= 1.11
+        from scipy.spatial import QhullError
+    except ImportError:  # pragma: no cover
+        from scipy.spatial.qhull import QhullError  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover
+    cKDTree = None  # type: ignore
+    ConvexHull = None  # type: ignore
+    QhullError = RuntimeError  # type: ignore
 
 
 # --------------------------------------------------------------------------- #
@@ -64,7 +77,12 @@ class P2RankPocket:
     member_indices: np.ndarray
     cluster_indices: np.ndarray
     sum_prob: float
-    surface_points: int
+    sample_points: int
+    surface_atoms: int
+    z_score_tp: Optional[float] = None
+    proba_tp: Optional[float] = None
+    raw_new_score: Optional[float] = None
+    pocket_volume: Optional[float] = None
 
     def to_csv_row(self, protein_id: str, pocket_count: int) -> List[str]:
         """
@@ -75,6 +93,12 @@ class P2RankPocket:
             newRank, oldScore, zScoreTP, probaTP, samplePoints,
             rawNewScore, pocketVolume, surfaceAtoms
         """
+
+        def _format(value: Optional[float]) -> str:
+            if value is None:
+                return ""
+            return f"{value:.6f}"
+
         return [
             protein_id,
             "0",  # #ligands (unknown without GT)
@@ -83,14 +107,14 @@ class P2RankPocket:
             "",  # ligand name unknown
             str(self.rank),
             f"{self.score:.6f}",
-            str(self.rank),            # newRank
-            f"{self.score:.6f}",       # oldScore (mirror)
-            "",                        # zScoreTP
-            "",                        # probaTP
-            str(len(self.cluster_indices)),
-            f"{self.sum_prob:.6f}",    # rawNewScore proxy
-            "",                        # pocketVolume unavailable
-            str(self.surface_points),
+            str(self.rank),                       # newRank
+            f"{self.score:.6f}",                  # oldScore (mirror)
+            _format(self.z_score_tp),
+            _format(self.proba_tp),
+            str(self.sample_points),
+            _format(self.raw_new_score if self.raw_new_score is not None else self.sum_prob),
+            _format(self.pocket_volume),
+            str(self.surface_atoms),
         ]
 
 
@@ -107,6 +131,20 @@ class VectorsCSVIndex:
 
     def __init__(self, csv_path: Path, cache_dir: Optional[Path] = None):
         self.csv_path = Path(csv_path)
+        self._is_directory = self.csv_path.is_dir()
+        if self._is_directory:
+            self.header = []
+            self._index = {}
+            self._residue_idx = -1
+            self._coord_idx = (-1, -1, -1)
+            self._key_mode = None
+            self._protein_idx = None
+            self._chain_idx = None
+            self._residue_id_idx = None
+            self.cache_file = None
+            logger.info(f"Using per-protein feature directory: {self.csv_path}")
+            return
+
         if cache_dir is None:
             cache_dir = self.csv_path.parent / "tmp"
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +154,10 @@ class VectorsCSVIndex:
         self._index: Dict[str, Tuple[int, int]] = {}
         self._residue_idx: int = -1
         self._coord_idx: Tuple[int, int, int] = (-1, -1, -1)
+        self._key_mode: Optional[str] = None
+        self._protein_idx: Optional[int] = None
+        self._chain_idx: Optional[int] = None
+        self._residue_id_idx: Optional[int] = None
 
         if self.cache_file.exists() and self.cache_file.stat().st_mtime > self.csv_path.stat().st_mtime:
             self._load_index()
@@ -125,66 +167,109 @@ class VectorsCSVIndex:
 
     def _build_index(self) -> None:
         logger.info("Building CSV index for %s (this may take a few minutes)...", self.csv_path)
-        index: Dict[str, Tuple[int, int]] = {}
+        index: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
 
-        with self.csv_path.open("r", newline="") as fh:
-            reader = csv.reader(fh)
-            self.header = next(reader)
-            key_idx = self.header.index("protein_key")
-            self._residue_idx = self.header.index("residue_number")
+        with self.csv_path.open("rb") as raw:
+            header_line = raw.readline()
+            if not header_line:
+                self.header = []
+                self._index = {}
+                return
+
+            header = next(csv.reader([header_line.decode("utf-8")]))
+            self.header = header
+
+            if "protein_key" in header:
+                self._key_mode = "protein_key"
+                self._protein_idx = header.index("protein_key")
+            elif "protein_id" in header and "chain_id" in header:
+                self._key_mode = "protein_chain"
+                self._protein_idx = header.index("protein_id")
+                self._chain_idx = header.index("chain_id")
+            elif "residue_id" in header:
+                self._key_mode = "residue_id"
+                self._residue_id_idx = header.index("residue_id")
+            else:
+                raise ValueError("CSV must contain 'protein_key', 'protein_id'/'chain_id', or 'residue_id' column.")
+
+            self._residue_idx = header.index("residue_number")
             self._coord_idx = (
-                self.header.index("x"),
-                self.header.index("y"),
-                self.header.index("z"),
+                header.index("x"),
+                header.index("y"),
+                header.index("z"),
             )
 
             current_key: Optional[str] = None
-            start_pos: int = fh.tell()
+            start_pos: int = raw.tell()
             count: int = 0
 
             while True:
-                pos_before = fh.tell()
-                try:
-                    row = next(reader)
-                except StopIteration:
+                pos_before = raw.tell()
+                line = raw.readline()
+                if not line:
                     if current_key is not None:
-                        index[current_key] = (start_pos, count)
+                        index[current_key].append((start_pos, count))
                     break
 
-                protein_key = row[key_idx]
+                try:
+                    row = next(csv.reader([line.decode("utf-8", errors="ignore")]))
+                except StopIteration:
+                    continue
+
+                protein_key = self._extract_key_from_row(row)
 
                 if protein_key != current_key:
                     if current_key is not None:
-                        index[current_key] = (start_pos, count)
+                        index[current_key].append((start_pos, count))
                     current_key = protein_key
                     start_pos = pos_before
                     count = 1
                 else:
                     count += 1
 
-        self._index = index
+        self._index = dict(index)
         logger.info("Indexed %d protein keys from CSV", len(self._index))
 
     def _save_index(self) -> None:
+        if self.cache_file is None:
+            return
         payload = {
             "header": self.header,
             "index": self._index,
             "residue_idx": self._residue_idx,
             "coord_idx": self._coord_idx,
+            "key_mode": getattr(self, "_key_mode", "protein_key"),
+            "protein_idx": getattr(self, "_protein_idx", None),
+            "chain_idx": getattr(self, "_chain_idx", None),
+            "residue_id_idx": getattr(self, "_residue_id_idx", None),
         }
         with self.cache_file.open("wb") as fh:
             pickle.dump(payload, fh)
 
     def _load_index(self) -> None:
+        if self.cache_file is None or not self.cache_file.exists():
+            return
         with self.cache_file.open("rb") as fh:
             payload = pickle.load(fh)
         self.header = payload["header"]
-        self._index = payload["index"]
+        raw_index = payload["index"]
+        self._index = {
+            key: value if isinstance(value, list) else [tuple(value)]
+            for key, value in raw_index.items()
+        }
         self._residue_idx = payload["residue_idx"]
         self._coord_idx = tuple(payload["coord_idx"])
+        self._key_mode = payload.get("key_mode", "protein_key")
+        self._protein_idx = payload.get("protein_idx")
+        self._chain_idx = payload.get("chain_idx")
+        self._residue_id_idx = payload.get("residue_id_idx")
         logger.info("Loaded cached CSV index with %d protein keys", len(self._index))
 
     def has_protein(self, protein_key: str) -> bool:
+        if getattr(self, "_is_directory", False):
+            base, _ = self._split_protein_key(protein_key)
+            feature_file = self.csv_path / f"{base}.pdb_features.csv"
+            return feature_file.exists()
         return protein_key in self._index
 
     def load_points(self, protein_key: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -195,36 +280,90 @@ class VectorsCSVIndex:
             coords: (N, 3) array
             residue_numbers: (N,) array
         """
-        if protein_key not in self._index:
+        if getattr(self, "_is_directory", False):
+            base, chain = self._split_protein_key(protein_key)
+            feature_file = self.csv_path / f"{base}.pdb_features.csv"
+            if not feature_file.exists():
+                logger.warning("Feature CSV not found for %s", protein_key)
+                return np.empty((0, 3), dtype=np.float32), np.empty((0,), dtype=np.int32)
+
+            coords: List[List[float]] = []
+            residues: List[int] = []
+            chain_filter = chain.upper()
+
+            with feature_file.open("r", newline="") as fh:
+                reader = csv.DictReader(fh)
+                for row in reader:
+                    if chain_filter:
+                        chain_value = row.get("chain_id", "").strip().upper()
+                        if chain_value and chain_value != chain_filter:
+                            continue
+                    residues.append(int(float(row["residue_number"])))
+                    coords.append([
+                        float(row["x"]),
+                        float(row["y"]),
+                        float(row["z"]),
+                    ])
+
+            return np.asarray(coords, dtype=np.float32), np.asarray(residues, dtype=np.int32)
+
+        segments = self._index.get(protein_key)
+        if not segments:
             return np.empty((0, 3), dtype=np.float32), np.empty((0,), dtype=np.int32)
 
-        start, count = self._index[protein_key]
         coords: List[List[float]] = []
         residues: List[int] = []
 
         with self.csv_path.open("rb") as raw:
-            raw.seek(start)
-            text = io.TextIOWrapper(raw, newline="")
-            text.seek(0, 1)  # sync after seek
-            reader = csv.reader(text)
+            for start, count in segments:
+                raw.seek(start)
+                for _ in range(count):
+                    line = raw.readline()
+                    if not line:
+                        break
+                    try:
+                        row = next(csv.reader([line.decode("utf-8", errors="ignore")]))
+                    except StopIteration:
+                        continue
 
-            for _ in range(count):
-                try:
-                    row = next(reader)
-                except StopIteration:
-                    break
+                    residues.append(int(float(row[self._residue_idx])))
+                    coords.append([
+                        float(row[self._coord_idx[0]]),
+                        float(row[self._coord_idx[1]]),
+                        float(row[self._coord_idx[2]]),
+                    ])
 
-                residues.append(int(float(row[self._residue_idx])))
-                coords.append([
-                    float(row[self._coord_idx[0]]),
-                    float(row[self._coord_idx[1]]),
-                    float(row[self._coord_idx[2]]),
-                ])
+        return np.asarray(coords, dtype=np.float32), np.asarray(residues, dtype=np.int32)
 
-        return (
-            np.asarray(coords, dtype=np.float32),
-            np.asarray(residues, dtype=np.int32),
-        )
+    def _extract_key_from_row(self, row: List[str]) -> str:
+        """Derive protein key (e.g., 1a4j_H) from CSV row."""
+        if getattr(self, "_key_mode", None) == "protein_key":
+            return row[self._protein_idx].strip()
+        elif getattr(self, "_key_mode", None) == "protein_chain":
+            prot = row[self._protein_idx].strip().lower()
+            chain = row[self._chain_idx].strip().upper()
+            return f"{prot}_{chain}" if chain else prot
+        elif getattr(self, "_key_mode", None) == "residue_id":
+            residue_id = row[self._residue_id_idx].strip()
+            if ":" in residue_id:
+                parts = residue_id.split(":")
+                if len(parts) >= 2:
+                    return f"{parts[0].lower()}_{parts[1]}"
+            return residue_id.lower()
+        else:
+            raise ValueError("CSV indexer not initialised with a valid key mode.")
+
+    @staticmethod
+    def _split_protein_key(protein_key: str) -> Tuple[str, str]:
+        base = protein_key
+        chain = ""
+        if "_" in protein_key:
+            left, right = protein_key.rsplit("_", 1)
+            if right and len(right) <= 2 and right.isalpha():
+                base, chain = left, right
+            else:
+                base, chain = protein_key, ""
+        return base.lower(), chain.upper()
 
 
 # --------------------------------------------------------------------------- #
@@ -242,24 +381,37 @@ class H5ProteinIndex:
     def _build_index(self) -> None:
         mapping: Dict[str, Tuple[int, int]] = {}
         with h5py.File(self.h5_path, "r") as fh:
-            keys = fh["protein_keys"]
-            total = len(keys)
+            keys_dataset = fh["protein_keys"]
+            # Materialise once to avoid per-element HDF5 reads (millions of lookups)
+            raw_keys = keys_dataset[:]
 
-            current: Optional[str] = None
-            start = 0
+        if isinstance(raw_keys, np.ndarray):
+            if raw_keys.dtype.kind in {"S", "a"}:
+                decoded = np.char.decode(raw_keys, "utf-8")
+            else:
+                decoded = raw_keys.astype(str)
+        else:
+            decoded = np.array(
+                [item.decode() if isinstance(item, bytes) else str(item) for item in raw_keys],
+                dtype=object,
+            )
 
-            for idx in range(total):
-                raw = keys[idx]
-                protein = raw.decode() if isinstance(raw, bytes) else str(raw)
+        if decoded.ndim != 1:
+            decoded = decoded.reshape(-1)
 
-                if protein != current:
-                    if current is not None:
-                        mapping[current] = (start, idx)
-                    current = protein
-                    start = idx
+        total = len(decoded)
+        if total == 0:
+            self._index = {}
+            return
 
-            if current is not None:
-                mapping[current] = (start, total)
+        # Find change points where protein id switches
+        change_points = np.flatnonzero(np.concatenate(([True], decoded[1:] != decoded[:-1])))
+        # Append sentinel for final segment
+        boundaries = np.append(change_points, total)
+
+        for idx, start in enumerate(change_points):
+            end = boundaries[idx + 1]
+            mapping[str(decoded[start])] = (int(start), int(end))
 
         self._index = mapping
         logger.info("Indexed %d proteins from H5", len(self._index))
@@ -328,8 +480,15 @@ class ProteinPointLoader:
 class P2RankPostProcessor:
     """Python implementation of P2Rank's pocket aggregation."""
 
-    def __init__(self, params: Optional[P2RankParams] = None):
+    def __init__(
+        self,
+        params: Optional[P2RankParams] = None,
+        zscore_transformer: Optional[ScoreTransformer] = None,
+        probability_transformer: Optional[ScoreTransformer] = None,
+    ):
         self.params = params or P2RankParams()
+        self.zscore_transformer = zscore_transformer
+        self.probability_transformer = probability_transformer
 
     # -- clustering ----------------------------------------------------- #
 
@@ -397,6 +556,11 @@ class P2RankPostProcessor:
         ligandable_coords = coords[ligandable_idx]
         clusters = self._single_linkage_clusters(ligandable_coords, self.params.pred_clustering_dist)
 
+        if cKDTree is None:
+            raise ImportError("scipy is required for KDTree-based neighbour search")
+
+        kd_tree = cKDTree(coords)
+
         pockets: List[P2RankPocket] = []
 
         for cluster in clusters:
@@ -404,12 +568,20 @@ class P2RankPostProcessor:
             if len(global_cluster_idx) < self.params.pred_min_cluster_size:
                 continue
 
-            pocket_idx = self._grow_cluster(coords, global_cluster_idx)
+            pocket_idx = self._grow_cluster(coords, global_cluster_idx, kd_tree)
 
             if pocket_idx.size == 0:
                 continue
 
-            pocket = self._build_pocket(protein_id, coords, probs, residue_numbers, pocket_idx, global_cluster_idx)
+            pocket = self._build_pocket(
+                protein_id,
+                coords,
+                probs,
+                residue_numbers,
+                pocket_idx,
+                global_cluster_idx,
+                kd_tree,
+            )
             pockets.append(pocket)
 
         pockets.sort(key=lambda p: p.score, reverse=True)
@@ -421,25 +593,52 @@ class P2RankPostProcessor:
 
     # -- helpers -------------------------------------------------------- #
 
-    def _grow_cluster(self, coords: np.ndarray, cluster_idx: np.ndarray) -> np.ndarray:
-        """Extend cluster with neighbouring SAS points."""
-        cluster_coords = coords[cluster_idx]
-        diff = coords[:, None, :] - cluster_coords[None, :, :]
-        dist2 = np.sum(diff * diff, axis=2)
-        mask = np.any(dist2 <= (self.params.extended_pocket_cutoff ** 2), axis=1)
-        return np.where(mask)[0]
+    def _grow_cluster(self, coords: np.ndarray, cluster_idx: np.ndarray, tree: cKDTree) -> np.ndarray:
+        """Extend cluster with neighbouring SAS points from KDTree."""
+        pocket_members: set = set()
+        radius = self.params.extended_pocket_cutoff
+        for idx in cluster_idx:
+            neighbors = tree.query_ball_point(coords[idx], r=radius)
+            pocket_members.update(neighbors)
+        return np.array(sorted(pocket_members), dtype=np.int32)
 
-    def _balance_scores(self, coords: np.ndarray, transformed: np.ndarray) -> np.ndarray:
+    def _balance_scores(self, coords: np.ndarray, transformed: np.ndarray, tree: cKDTree) -> np.ndarray:
         """Optional density balancing."""
         if not self.params.balance_density or len(coords) == 0:
             return transformed
 
-        diff = coords[:, None, :] - coords[None, :, :]
-        dist2 = np.sum(diff * diff, axis=2)
-        radius2 = self.params.balance_density_radius ** 2
-        neighbour_counts = np.sum(dist2 <= radius2, axis=1)
-        neighbour_counts = np.maximum(neighbour_counts, 1)
-        return transformed / neighbour_counts
+        counts = np.array([
+            len(tree.query_ball_point(coord, r=self.params.balance_density_radius))
+            for coord in coords
+        ], dtype=np.int32)
+        counts = np.maximum(counts, 1)
+        return transformed / counts
+
+    @staticmethod
+    def _estimate_volume(coords: np.ndarray) -> Optional[float]:
+        if ConvexHull is None or len(coords) < 4:
+            return None
+        try:
+            hull = ConvexHull(coords)
+            return float(hull.volume)
+        except (QhullError, ValueError):  # pragma: no cover - defensive
+            return None
+
+    @staticmethod
+    def _count_surface_atoms(residue_numbers: np.ndarray) -> int:
+        if residue_numbers.size == 0:
+            return 0
+        unique = np.unique(residue_numbers)
+        return int(unique.size)
+
+    def _apply_transform(self, transformer: Optional[ScoreTransformer], score: float) -> Optional[float]:
+        if transformer is None:
+            return None
+        try:
+            return float(transformer.transform(score))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Score transform failed for score %.4f: %s", score, exc)
+            return None
 
     def _build_pocket(
         self,
@@ -449,12 +648,13 @@ class P2RankPostProcessor:
         residue_numbers: np.ndarray,
         pocket_idx: np.ndarray,
         cluster_idx: np.ndarray,
+        tree: cKDTree,
     ) -> P2RankPocket:
         pocket_coords = coords[pocket_idx]
         pocket_probs = probs[pocket_idx]
 
         transformed = pocket_probs ** self.params.point_score_pow
-        balanced = self._balance_scores(pocket_coords, transformed)
+        balanced = self._balance_scores(pocket_coords, transformed, tree)
 
         order = np.argsort(-balanced)
         if self.params.score_point_limit > 0:
@@ -466,6 +666,13 @@ class P2RankPostProcessor:
         cluster_coords = coords[cluster_idx]
         center = np.mean(cluster_coords, axis=0)
 
+        sample_points = int(len(cluster_idx))
+        surface_atoms = self._count_surface_atoms(residue_numbers[pocket_idx])
+        raw_new_score = sum_prob
+        pocket_volume = self._estimate_volume(pocket_coords)
+        z_score_tp = self._apply_transform(self.zscore_transformer, score)
+        proba_tp = self._apply_transform(self.probability_transformer, score)
+
         pocket = P2RankPocket(
             name="",
             rank=0,
@@ -474,7 +681,12 @@ class P2RankPostProcessor:
             member_indices=pocket_idx.astype(np.int32),
             cluster_indices=cluster_idx.astype(np.int32),
             sum_prob=sum_prob,
-            surface_points=len(pocket_idx),
+            sample_points=sample_points,
+            surface_atoms=surface_atoms,
+            z_score_tp=z_score_tp,
+            proba_tp=proba_tp,
+            raw_new_score=raw_new_score,
+            pocket_volume=pocket_volume,
         )
         logger.debug(
             "Protein %s pocket: members=%d score=%.3f sumP=%.3f",

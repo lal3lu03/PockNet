@@ -23,40 +23,62 @@ Usage:
     ensemble_probs = ensemble_predictions(seed_predictions)
 """
 
-from .core import (
-    residue_to_pockets,
-    make_residue_graph,
-    postprocess_residues,
-    PocketPostProcessor
-)
+import warnings
 
-from .ensemble import (
-    ensemble_predictions,
-    spatial_smoothing,
-    adaptive_threshold,
-    calibrate_predictions
-)
+try:
+    from .core import (
+        residue_to_pockets,
+        make_residue_graph,
+        postprocess_residues,
+        PocketPostProcessor,
+    )
+except ImportError as exc:  # pragma: no cover - optional dependency (scikit-learn)
+    residue_to_pockets = make_residue_graph = postprocess_residues = PocketPostProcessor = None  # type: ignore[assignment]
+    warnings.warn(f"post_processing.core unavailable ({exc}); core pocket utilities disabled.", RuntimeWarning)
 
-from .metrics import (
-    PocketEvaluator,
-    pocket_recall_at_k,
-    center_distance_metrics,
-    pocket_iou_metrics,
-    pocket_pr_curve
-)
+try:
+    from .ensemble import (
+        ensemble_predictions,
+        spatial_smoothing,
+        adaptive_threshold,
+        calibrate_predictions,
+    )
+except ImportError as exc:  # pragma: no cover
+    ensemble_predictions = spatial_smoothing = adaptive_threshold = calibrate_predictions = None  # type: ignore[assignment]
+    warnings.warn(f"post_processing.ensemble unavailable ({exc}); ensemble utilities disabled.", RuntimeWarning)
 
-from .inference import (
-    ModelInference,
-    load_checkpoint,
-    extract_predictions,
-    prepare_residue_data
-)
+try:
+    from .metrics import (
+        PocketEvaluator,
+        pocket_recall_at_k,
+        center_distance_metrics,
+        pocket_iou_metrics,
+        pocket_pr_curve,
+    )
+except ImportError as exc:  # pragma: no cover
+    PocketEvaluator = pocket_recall_at_k = center_distance_metrics = pocket_iou_metrics = pocket_pr_curve = None  # type: ignore[assignment]
+    warnings.warn(f"post_processing.metrics unavailable ({exc}); metrics utilities disabled.", RuntimeWarning)
 
-from .sweep import (
-    HyperparameterSweep,
-    pocket_optimization_objective,
-    run_validation_sweep
-)
+try:
+    from .inference import (
+        ModelInference,
+        load_checkpoint,
+        extract_predictions,
+        prepare_residue_data,
+    )
+except ImportError as exc:  # pragma: no cover
+    ModelInference = load_checkpoint = extract_predictions = prepare_residue_data = None  # type: ignore[assignment]
+    warnings.warn(f"post_processing.inference unavailable ({exc}); inference helpers disabled.", RuntimeWarning)
+
+try:
+    from .sweep import (
+        HyperparameterSweep,
+        pocket_optimization_objective,
+        run_validation_sweep,
+    )
+except ImportError as exc:  # pragma: no cover
+    HyperparameterSweep = pocket_optimization_objective = run_validation_sweep = None  # type: ignore[assignment]
+    warnings.warn(f"post_processing.sweep unavailable ({exc}); sweep utilities disabled.", RuntimeWarning)
 
 __version__ = "1.0.0"
 __author__ = "PockNet Team"

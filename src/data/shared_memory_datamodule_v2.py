@@ -766,11 +766,19 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         self.save_hyperparameters()
 
         project_root = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[2]))
+        data_root_env = os.environ.get("POCKNET_DATA_ROOT")
         if os.path.isabs(h5_filename):
             self.h5_file = Path(h5_filename)
+            base_data_dir = self.h5_file.parent
         else:
-            base_data_dir = Path(data_dir) if data_dir else project_root
+            if data_dir:
+                base_data_dir = Path(data_dir)
+            elif data_root_env:
+                base_data_dir = Path(data_root_env)
+            else:
+                base_data_dir = project_root
             self.h5_file = base_data_dir / h5_filename
+        self._base_data_dir = base_data_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -780,7 +788,14 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         self.transform = transform
         bu48_path = Path(bu48_ids_file)
         if not bu48_path.is_absolute():
-            bu48_path = project_root / bu48_path
+            candidate_roots = [self._base_data_dir, project_root]
+            resolved = None
+            for root in candidate_roots:
+                candidate = root / bu48_ids_file
+                if candidate.exists():
+                    resolved = candidate
+                    break
+            bu48_path = resolved if resolved is not None else project_root / bu48_path
         self.bu48_ids_file = bu48_path
         self.normalize_ids = normalize_ids
         
@@ -793,7 +808,14 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         if hard_positive_indices_path:
             hard_path = Path(hard_positive_indices_path)
             if not hard_path.is_absolute():
-                hard_path = project_root / hard_path
+                candidate_roots = [self._base_data_dir, project_root]
+                resolved = None
+                for root in candidate_roots:
+                    candidate = root / hard_positive_indices_path
+                    if candidate.exists():
+                        resolved = candidate
+                        break
+                hard_path = resolved if resolved is not None else project_root / hard_path
             self.hard_positive_indices_path = hard_path
         else:
             self.hard_positive_indices_path = None
@@ -807,7 +829,11 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         self.test_indices = None
         self.knn_cache = None  # Initialize k-NN cache attribute
         
-        log.info(f"TrueSharedMemoryDataModule initialized with file: {self.h5_file}")
+        log.info(
+            "TrueSharedMemoryDataModule initialized with file: %s (base_data_dir=%s)",
+            self.h5_file,
+            self._base_data_dir,
+        )
         if self.enable_knn:
             log.info(f"k-NN enabled with k_max={self.k_max}, pdb_base_dir={self.pdb_base_dir}")
     

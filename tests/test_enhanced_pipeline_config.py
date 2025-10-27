@@ -11,6 +11,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "post_processing" / "enhanced_pipeline.py"
 
+if not MODULE_PATH.exists():
+    pytest.skip(
+        "Enhanced pipeline script archived under deprecated/post_processing/",
+        allow_module_level=True,
+    )
+
 spec = importlib.util.spec_from_file_location("enhanced_pipeline", MODULE_PATH)
 enhanced_pipeline = importlib.util.module_from_spec(spec)
 assert spec.loader is not None

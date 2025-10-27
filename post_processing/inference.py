@@ -26,6 +26,7 @@ import h5py
 import pandas as pd
 from dataclasses import dataclass
 import sys
+from tqdm import tqdm
 
 # Configure logging first
 logger = logging.getLogger(__name__)
@@ -388,7 +389,8 @@ class ModelInference:
         results = {}
         
         # Process each protein
-        for protein_id in protein_ids:
+        progress_iter = tqdm(protein_ids, desc="Running inference", unit="protein", leave=False)
+        for protein_id in progress_iter:
             if protein_id not in protein_to_indices:
                 continue
                 
@@ -430,103 +432,184 @@ class ModelInference:
             except Exception as e:
                 logger.error(f"Error processing {protein_id}: {e}")
                 continue
-        
+        progress_iter.close()
         logger.info(f"Successfully processed {len(results)} proteins using shared memory")
         return results
     
-    def _predict_from_h5_regular(self, 
-                                h5_file: str,
-                                protein_ids: Optional[List[str]],
-                                batch_size: int) -> Dict[str, np.ndarray]:
+    def _predict_from_h5_regular(self,
+                                 h5_file: str,
+                                 protein_ids: Optional[List[str]],
+                                 batch_size: int) -> Dict[str, np.ndarray]:
         """Regular H5 loading without shared memory."""
-        results = {}
-        
+        results: Dict[str, np.ndarray] = {}
+
         try:
-            # Use the actual data loading logic from TrueSharedMemoryDataModule
             logger.info(f"Loading H5 data from: {h5_file}")
-            
-            with h5py.File(h5_file, 'r') as f:
-                # Load data arrays (matching actual H5 structure)
-                # Structure found: ['esm', 'feature_names', 'labels', 'protein_keys', 'residue_numbers', 'split', 'tabular']
-                tabular_data = f['tabular'][:]  # Shape: (n_samples, 35)
-                esm_data = f['esm'][:]          # Shape: (n_samples, 2560)
-                labels = f['labels'][:]         # Shape: (n_samples,)
-                residue_numbers = f['residue_numbers'][:] # Shape: (n_samples,)
-                
-                # Load protein keys
-                protein_keys = [key.decode() if isinstance(key, bytes) else str(key) 
-                               for key in f['protein_keys'][:]]
-                
-                logger.info(f"Loaded {len(tabular_data)} samples from H5")
-                logger.info(f"ESM features shape: {esm_data.shape}")
-                logger.info(f"Tabular features shape: {tabular_data.shape}")
-                
-                # Group by protein
-                protein_to_indices = {}
+
+            with h5py.File(h5_file, "r") as f:
+                aggregation_mode = f.attrs.get("aggregation_mode", "mean")
+                if isinstance(aggregation_mode, bytes):
+                    aggregation_mode = aggregation_mode.decode("utf-8")
+                transformer_mode = aggregation_mode == "transformer" or "neighbor_h5_indices" in f
+                if transformer_mode:
+                    logger.info("Detected transformer aggregation mode (neighbor attention)")
+                else:
+                    logger.info("Detected mean aggregation mode (pre-aggregated embeddings)")
+
+                tabular_data = f["tabular"]
+                esm_data = f["esm"]
+                residue_numbers_ds = f["residue_numbers"]
+                protein_keys_raw = f["protein_keys"][:]
+                protein_keys = [key.decode() if isinstance(key, bytes) else str(key) for key in protein_keys_raw]
+
+                neighbor_idx_ds = f["neighbor_h5_indices"] if "neighbor_h5_indices" in f else None
+                neighbor_dist_ds = f["neighbor_distances"] if "neighbor_distances" in f else None
+                neighbor_resnum_ds = f["neighbor_resnums"] if "neighbor_resnums" in f else None
+
+                protein_to_indices: Dict[str, List[int]] = {}
                 for idx, protein_id in enumerate(protein_keys):
-                    if protein_id not in protein_to_indices:
-                        protein_to_indices[protein_id] = []
-                    protein_to_indices[protein_id].append(idx)
-                
+                    protein_to_indices.setdefault(protein_id, []).append(idx)
+
                 available_proteins = list(protein_to_indices.keys())
                 logger.info(f"Found {len(available_proteins)} unique proteins")
-                
+
                 if protein_ids is None:
                     protein_ids = available_proteins
                 else:
-                    # Check that requested proteins exist
                     missing = set(protein_ids) - set(available_proteins)
                     if missing:
                         logger.warning(f"Missing proteins in H5: {missing}")
                     protein_ids = [pid for pid in protein_ids if pid in available_proteins]
-                
+
                 logger.info(f"Processing {len(protein_ids)} proteins")
-                
-                # Process each protein
-                for protein_id in protein_ids:
+                progress_iter = tqdm(protein_ids, desc="Running inference", unit="protein", leave=False)
+                for protein_id in progress_iter:
                     try:
-                        indices = protein_to_indices[protein_id]
-                        n_residues = len(indices)
-                        
-                        logger.debug(f"Processing {protein_id}: {n_residues} residues")
-                        
-                        # Extract protein data
-                        protein_tabular = tabular_data[indices]  # (n_residues, 35)
-                        protein_esm = esm_data[indices]          # (n_residues, 2560)
-                        
-                        # Process in batches
-                        protein_predictions = []
-                        
-                        for i in range(0, n_residues, batch_size):
-                            batch_end = min(i + batch_size, n_residues)
-                            
-                            # Create batch tensors
-                            batch_tabular = torch.tensor(protein_tabular[i:batch_end], dtype=torch.float32)
-                            batch_esm = torch.tensor(protein_esm[i:batch_end], dtype=torch.float32)
-                            
-                            # Predict
-                            with torch.no_grad():
-                                batch_pred = self.model(batch_tabular.to(self.device), batch_esm.to(self.device))
-                                if hasattr(batch_pred, 'logits'):
-                                    batch_pred = batch_pred.logits
-                                
-                                batch_pred = torch.sigmoid(batch_pred).squeeze()
-                                protein_predictions.append(batch_pred.cpu().numpy())
-                        
-                        # Combine all batches for this protein
-                        all_pred = np.concatenate(protein_predictions)
-                        results[protein_id] = all_pred
-                        
-                        logger.debug(f"Completed {protein_id}: {len(all_pred)} predictions")
-                        
-                    except Exception as e:
-                        logger.error(f"Error processing {protein_id}: {e}")
+                        indices = protein_to_indices.get(protein_id, [])
+                        if not indices:
+                            logger.warning(f"No entries found for protein {protein_id}")
+                            continue
+
+                        idx_array = np.array(indices, dtype=np.int64)
+                        n_residues = len(idx_array)
+                        logger.debug(f"Processing {protein_id}: {n_residues} SAS points")
+
+                        protein_tabular = tabular_data[idx_array]
+                        protein_esm = esm_data[idx_array]
+                        protein_resnums = residue_numbers_ds[idx_array]
+
+                        if transformer_mode:
+                            if neighbor_idx_ds is None or neighbor_dist_ds is None or neighbor_resnum_ds is None:
+                                logger.warning("Transformer mode requested but neighbor datasets missing; falling back to mean aggregation.")
+                                transformer_mode = False
+                                protein_neighbor_idx = protein_neighbor_dist = protein_neighbor_res = None
+                                local_index_map = {}
+                            else:
+                                protein_neighbor_idx = neighbor_idx_ds[idx_array].astype(np.int64, copy=False)
+                                protein_neighbor_dist = neighbor_dist_ds[idx_array].astype(np.float32, copy=False)
+                                protein_neighbor_res = neighbor_resnum_ds[idx_array].astype(np.int64, copy=False)
+                                local_index_map = {int(global_idx): local_idx for local_idx, global_idx in enumerate(idx_array)}
+                        else:
+                            protein_neighbor_idx = protein_neighbor_dist = protein_neighbor_res = None
+                            local_index_map = {}
+
+                        protein_predictions: List[np.ndarray] = []
+
+                        for start in range(0, n_residues, batch_size):
+                            end = min(start + batch_size, n_residues)
+
+                            center_tab = protein_tabular[start:end]
+                            center_esm = protein_esm[start:end]
+
+                            tab_tensor = torch.from_numpy(center_tab).float().to(self.device)
+                            esm_tensor = torch.from_numpy(center_esm).float().to(self.device)
+
+                            if transformer_mode and protein_neighbor_idx is not None:
+                                idx_chunk = protein_neighbor_idx[start:end]
+                                dist_chunk = protein_neighbor_dist[start:end]
+                                res_chunk = protein_neighbor_res[start:end]
+                                center_indices = idx_array[start:end]
+                                center_resnums = protein_resnums[start:end]
+
+                                valid_mask = idx_chunk >= 0
+                                idx_chunk_local = np.full_like(idx_chunk, fill_value=-1, dtype=np.int64)
+
+                                if valid_mask.any():
+                                    unique_vals = np.unique(idx_chunk[valid_mask])
+                                    for val in unique_vals:
+                                        local_pos = local_index_map.get(int(val))
+                                        if local_pos is not None:
+                                            idx_chunk_local[idx_chunk == val] = local_pos
+
+                                neighbors_chunk = np.zeros(
+                                    (idx_chunk.shape[0], idx_chunk.shape[1], protein_esm.shape[1]),
+                                    dtype=np.float32,
+                                )
+
+                                flat_neighbors = neighbors_chunk.reshape(-1, protein_esm.shape[1])
+                                flat_local = idx_chunk_local.reshape(-1)
+                                mask_local = flat_local >= 0
+                                if mask_local.any():
+                                    flat_neighbors[mask_local] = protein_esm[flat_local[mask_local]]
+
+                                # Handle neighbors outside current protein
+                                cross_mask = (idx_chunk >= 0) & (idx_chunk_local < 0)
+                                if np.any(cross_mask):
+                                    cross_positions = np.argwhere(cross_mask)
+                                    for row_idx, neigh_idx in cross_positions:
+                                        global_idx = int(idx_chunk[row_idx, neigh_idx])
+                                        flat_neighbors[row_idx * idx_chunk.shape[1] + neigh_idx] = esm_data[global_idx]
+
+                                # Fallback for missing neighbors -> use centre embedding
+                                if np.any(~valid_mask):
+                                    neighbors_chunk[~valid_mask] = center_esm[:, None, :][~valid_mask]
+
+                                dist_chunk = dist_chunk.astype(np.float32, copy=False)
+                                dist_chunk[~valid_mask] = np.inf
+                                res_chunk = np.where(valid_mask, res_chunk, center_resnums[:, None])
+
+                                neighbor_emb_tensor = torch.from_numpy(neighbors_chunk).float().to(self.device)
+                                neighbor_dist_tensor = torch.from_numpy(dist_chunk).float().to(self.device)
+                                neighbor_res_tensor = torch.from_numpy(res_chunk).long().to(self.device)
+
+                                batch_dict = {
+                                    "tabular": tab_tensor,
+                                    "esm": esm_tensor,
+                                    "esm_neighbors": neighbor_emb_tensor,
+                                    "neighbor_distances": neighbor_dist_tensor,
+                                    "neighbor_resnums": neighbor_res_tensor,
+                                    "aggregation_mode": "transformer",
+                                }
+
+                                with torch.no_grad():
+                                    batch_logits = self.model(tab_tensor, batch=batch_dict)
+                                    if hasattr(batch_logits, "logits"):
+                                        batch_logits = batch_logits.logits
+                                    batch_probs = torch.sigmoid(batch_logits).squeeze().cpu().numpy()
+                                    protein_predictions.append(batch_probs)
+                            else:
+                                with torch.no_grad():
+                                    batch_logits = self.model(tab_tensor, esm_tensor)
+                                    if hasattr(batch_logits, "logits"):
+                                        batch_logits = batch_logits.logits
+                                    batch_probs = torch.sigmoid(batch_logits).squeeze().cpu().numpy()
+                                    protein_predictions.append(batch_probs)
+
+                        if protein_predictions:
+                            results[protein_id] = np.concatenate(protein_predictions)
+                            logger.debug(f"Completed {protein_id}: {len(results[protein_id])} predictions")
+                        else:
+                            logger.warning(f"No predictions generated for {protein_id}")
+
+                    except Exception as exc:
+                        logger.error(f"Error processing {protein_id}: {exc}")
                         continue
-                
-        except Exception as e:
-            logger.error(f"Failed to load H5 file: {e}")
+                progress_iter.close()
+
+        except Exception as exc:
+            logger.error(f"Failed to load H5 file: {exc}")
             return self._predict_from_h5_fallback(h5_file, protein_ids)
-        
+
         logger.info(f"Successfully processed {len(results)} proteins using regular H5 loading")
         return results
     
