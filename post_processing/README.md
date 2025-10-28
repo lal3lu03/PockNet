@@ -21,8 +21,8 @@ P2Rank’s pocket aggregation while consuming PockNet predictions.
 
 ```bash
 python -m post_processing.run_production_pipeline \
-  --checkpoint logs/fusion_all_train_complete/.../checkpoints/epoch=XX.ckpt \
-  --h5 data/h5/pocknet_with_esm2_3b.h5 \
+  --checkpoint logs/fusion_transformer_aggressive_oct17/runs/2025-10-23_blend_sweep/selective_swa_epoch09_12.ckpt \
+  --h5 data/h5/all_train_transformer_v2_optimized.h5 \
   --csv data/vectorsTrain_all_chainfix_filtered.csv \
   --threshold-grid auto \
   --output post_processing_results/p2rank_production
@@ -31,6 +31,7 @@ python -m post_processing.run_production_pipeline \
 - **Threshold sweep** – pass `--threshold-grid auto` (0.10–0.90) or a comma-list to evaluate IoU-sensitive cut-offs.
 - **Outputs** – P2Rank-compatible `pockets.csv` files are written under `cases/`, with aggregate metrics in `summary/summary.csv` and `summary/threshold_sweep.csv`.
 - **Dependencies** – requires the standard library stack plus `scikit-learn` for IoU scoring; PyMOL rendering is not yet automated.
+- **Config shortcut** – the file `post_processing/configs/sota_default.yaml` now points at the current best checkpoint (`selective_swa_epoch09_12.ckpt`) and the Oct‑23 dataset. You can pass it via `--config` or use it as the basis for multi-run scripts.
 
 Legacy orchestration scripts (enhanced/advanced/complete pipelines) have been
 archived under `deprecated/post_processing/`.

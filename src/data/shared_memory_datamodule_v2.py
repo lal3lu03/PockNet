@@ -146,7 +146,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             if isinstance(aggregation_mode, bytes):
                 aggregation_mode = aggregation_mode.decode('utf-8')
             
-            # Check for transformer data in either v1 or v2 format
+            # Check for transformer data in either v1, v2 or v3 format
             has_transformer_v1 = (
                 'esm_neighbors' in h5f and 
                 'neighbor_distances' in h5f and
@@ -157,14 +157,25 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                 'neighbor_distances' in h5f and
                 'neighbor_resnums' in h5f
             )
+            has_transformer_v3 = (
+                'neighbor_residue_indices' in h5f and
+                'neighbor_distances' in h5f and
+                'neighbor_resnums' in h5f and
+                'residue_embeddings' in h5f
+            )
             has_transformer_data = (
                 aggregation_mode == 'transformer' and 
-                (has_transformer_v1 or has_transformer_v2)
+                (has_transformer_v1 or has_transformer_v2 or has_transformer_v3)
             )
             
             if has_transformer_data:
                 knn_k = int(h5f.attrs.get('knn_k', 3))
-                format_type = "v1 (pre-computed embeddings)" if has_transformer_v1 else "v2 (indices)"
+                if has_transformer_v3:
+                    format_type = "v3 (residue table indices)"
+                elif has_transformer_v2:
+                    format_type = "v2 (indices)"
+                else:
+                    format_type = "v1 (pre-computed embeddings)"
                 log.info(f"[rank: {rank}] 🔬 Transformer mode detected: k={knn_k} neighbors, format={format_type}")
             else:
                 knn_k = None
@@ -201,23 +212,57 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             if has_split:
                 spl_path, spl_mm = create_memmap("split", (total_samples,), np.int8)
             
+            residue_emb_mm = residue_key_mm = residue_num_mm = None
+            residue_total = 0
+
             # ⭐ NEW: Create memory-mapped arrays for transformer neighbor tensors
             if has_transformer_data:
-                # Check format: v1 (esm_neighbors) vs v2 (neighbor_h5_indices)
-                if 'neighbor_h5_indices' in h5f:
-                    # V2 format: space-efficient indices
+                if 'neighbor_residue_indices' in h5f:
+                    # V3 format: neighbour indices reference residue table embeddings
+                    log.info(f"[rank: {rank}] Detected v3 format (neighbor_residue_indices)")
+
+                    neighbor_idx_path, neighbor_idx_mm = create_memmap(
+                        "neighbor_residue_indices", (total_samples, knn_k), np.int32
+                    )
+                    neighbor_dist_path, neighbor_dist_mm = create_memmap(
+                        "neighbor_distances", (total_samples, knn_k), np.float32
+                    )
+                    neighbor_resnum_path, neighbor_resnum_mm = create_memmap(
+                        "neighbor_resnums", (total_samples, knn_k), np.int32
+                    )
+
+                    residue_total = h5f['residue_embeddings'].shape[0]
+                    residue_emb_path, residue_emb_mm = create_memmap(
+                        "residue_embeddings", h5f['residue_embeddings'].shape, np.float32
+                    )
+                    residue_key_path, residue_key_mm = create_memmap(
+                        "residue_protein_keys", (residue_total,), f"S{max_pid_len}"
+                    )
+                    residue_num_path, residue_num_mm = create_memmap(
+                        "residue_numbers_table", (residue_total,), np.int32
+                    )
+
+                    log.info(
+                        f"[rank: {rank}] Created v3 neighbor memmaps: indices={neighbor_idx_mm.shape}, "
+                        f"residue_table={residue_emb_mm.shape}"
+                    )
+
+                elif 'neighbor_h5_indices' in h5f:
+                    # V2 format: space-efficient indices pointing at sample rows
                     log.info(f"[rank: {rank}] Detected v2 format (neighbor_h5_indices)")
-                    
+
                     neighbor_idx_path, neighbor_idx_mm = create_memmap(
                         "neighbor_h5_indices", (total_samples, knn_k), np.int32)
                     neighbor_dist_path, neighbor_dist_mm = create_memmap(
-                        "neighbor_distances", (total_samples, knn_k), np.float32)  # Will store float16 from H5
+                        "neighbor_distances", (total_samples, knn_k), np.float32)
                     neighbor_resnum_path, neighbor_resnum_mm = create_memmap(
                         "neighbor_resnums", (total_samples, knn_k), np.int32)
-                    
-                    log.info(f"[rank: {rank}] Created v2 neighbor memmaps: "
-                            f"indices={neighbor_idx_mm.shape}, distances={neighbor_dist_mm.shape}")
-                    
+
+                    log.info(
+                        f"[rank: {rank}] Created v2 neighbor memmaps: "
+                        f"indices={neighbor_idx_mm.shape}, distances={neighbor_dist_mm.shape}"
+                    )
+
                 elif 'esm_neighbors' in h5f:
                     # V1 format: pre-materialized embeddings (legacy)
                     log.info(f"[rank: {rank}] Detected v1 format (esm_neighbors)")
@@ -230,8 +275,10 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                     neighbor_resnum_path, neighbor_resnum_mm = create_memmap(
                         "neighbor_resnums", (total_samples, knn_k), np.int64)
                     
-                    log.info(f"[rank: {rank}] Created v1 neighbor memmaps: "
-                            f"esm_neighbors={neighbor_shape}, distances={neighbor_dist_mm.shape}")
+                    log.info(
+                        f"[rank: {rank}] Created v1 neighbor memmaps: "
+                        f"esm_neighbors={neighbor_shape}, distances={neighbor_dist_mm.shape}"
+                    )
                 else:
                     log.warning(f"[rank: {rank}] Transformer mode but no neighbor datasets found!")
                     has_transformer_data = False
@@ -260,13 +307,15 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                 
                 # ⭐ NEW: Copy transformer neighbor tensors (format-aware)
                 if has_transformer_data:
-                    if 'neighbor_h5_indices' in h5f:
-                        # V2 format
+                    if 'neighbor_residue_indices' in h5f:
+                        neighbor_idx_mm[i:end_idx] = h5f['neighbor_residue_indices'][i:end_idx].astype(np.int32, copy=False)
+                        neighbor_dist_mm[i:end_idx] = h5f['neighbor_distances'][i:end_idx].astype(np.float32, copy=False)
+                        neighbor_resnum_mm[i:end_idx] = h5f['neighbor_resnums'][i:end_idx].astype(np.int32, copy=False)
+                    elif 'neighbor_h5_indices' in h5f:
                         neighbor_idx_mm[i:end_idx] = h5f['neighbor_h5_indices'][i:end_idx].astype(np.int32, copy=False)
                         neighbor_dist_mm[i:end_idx] = h5f['neighbor_distances'][i:end_idx].astype(np.float32, copy=False)
                         neighbor_resnum_mm[i:end_idx] = h5f['neighbor_resnums'][i:end_idx].astype(np.int32, copy=False)
                     elif 'esm_neighbors' in h5f:
-                        # V1 format
                         esm_neigh_mm[i:end_idx] = h5f['esm_neighbors'][i:end_idx].astype(np.float32, copy=False)
                         neighbor_dist_mm[i:end_idx] = h5f['neighbor_distances'][i:end_idx].astype(np.float32, copy=False)
                         neighbor_resnum_mm[i:end_idx] = h5f['neighbor_resnums'][i:end_idx].astype(np.int64, copy=False)
@@ -275,6 +324,29 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                     log.info(f"📥 [rank: {rank}] Loaded {end_idx}/{total_samples} samples "
                             f"({100*end_idx/total_samples:.1f}%)")
             
+            # Copy residue lookup table for v3 after sample chunks
+            if has_transformer_data and 'neighbor_residue_indices' in h5f and residue_emb_mm is not None:
+                residue_chunk = 200000
+                residue_embeddings_ds = h5f['residue_embeddings']
+                residue_keys_ds = h5f['residue_protein_keys']
+                residue_numbers_ds = h5f['residue_numbers_table']
+                residue_total = residue_embeddings_ds.shape[0]
+
+                for j in range(0, residue_total, residue_chunk):
+                    j_end = min(j + residue_chunk, residue_total)
+                    residue_emb_mm[j:j_end] = residue_embeddings_ds[j:j_end].astype(np.float32, copy=False)
+
+                    raw_keys = residue_keys_ds[j:j_end]
+                    residue_key_mm[j:j_end] = np.asarray(
+                        [(k.decode() if isinstance(k, bytes) else str(k)) for k in raw_keys],
+                        dtype=f"S{max_pid_len}"
+                    )
+                    residue_num_mm[j:j_end] = residue_numbers_ds[j:j_end].astype(np.int32, copy=False)
+
+                residue_emb_mm.flush()
+                residue_key_mm.flush()
+                residue_num_mm.flush()
+
             # Ensure all data is written to disk/RAM
             tab_mm.flush()
             esm_mm.flush() 
@@ -286,7 +358,11 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             
             # ⭐ NEW: Flush transformer neighbor memmaps (format-aware)
             if has_transformer_data:
-                if 'neighbor_h5_indices' in h5f:
+                if 'neighbor_residue_indices' in h5f:
+                    neighbor_idx_mm.flush()
+                    neighbor_dist_mm.flush()
+                    neighbor_resnum_mm.flush()
+                elif 'neighbor_h5_indices' in h5f:
                     # V2 format
                     neighbor_idx_mm.flush()
                     neighbor_dist_mm.flush()
@@ -307,7 +383,18 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             
             # ⭐ NEW: Add transformer neighbor memory usage (format-aware)
             if has_transformer_data:
-                if 'neighbor_h5_indices' in h5f:
+                if 'neighbor_residue_indices' in h5f and residue_emb_mm is not None:
+                    neighbor_memory_gb = (
+                        neighbor_idx_mm.nbytes
+                        + neighbor_dist_mm.nbytes
+                        + neighbor_resnum_mm.nbytes
+                        + residue_emb_mm.nbytes
+                        + residue_key_mm.nbytes
+                        + residue_num_mm.nbytes
+                    ) / (1024**3)
+                    log.info(f"[rank: {rank}] Neighbor/residue table memory: {neighbor_memory_gb:.2f} GB")
+                    memory_gb += neighbor_memory_gb
+                elif 'neighbor_h5_indices' in h5f:
                     # V2 format: much smaller (indices instead of embeddings)
                     neighbor_memory_gb = (
                         neighbor_idx_mm.nbytes + neighbor_dist_mm.nbytes + neighbor_resnum_mm.nbytes
@@ -363,7 +450,28 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             if has_transformer_data:
                 manifest["knn_k"] = knn_k
                 
-                if 'neighbor_h5_indices' in h5f:
+                if 'neighbor_residue_indices' in h5f:
+                    manifest["transformer_format"] = "v3_residue_table"
+                    manifest["paths"]["neighbor_residue_indices"] = str(neighbor_idx_path)
+                    manifest["paths"]["neighbor_distances"] = str(neighbor_dist_path)
+                    manifest["paths"]["neighbor_resnums"] = str(neighbor_resnum_path)
+                    manifest["paths"]["residue_embeddings"] = str(residue_emb_path)
+                    manifest["paths"]["residue_protein_keys"] = str(residue_key_path)
+                    manifest["paths"]["residue_numbers_table"] = str(residue_num_path)
+                    manifest["shapes"]["neighbor_residue_indices"] = (total_samples, knn_k)
+                    manifest["shapes"]["neighbor_distances"] = (total_samples, knn_k)
+                    manifest["shapes"]["neighbor_resnums"] = (total_samples, knn_k)
+                    manifest["shapes"]["residue_embeddings"] = h5f['residue_embeddings'].shape
+                    manifest["shapes"]["residue_protein_keys"] = (residue_total,)
+                    manifest["shapes"]["residue_numbers_table"] = (residue_total,)
+                    manifest["dtypes"]["neighbor_residue_indices"] = "int32"
+                    manifest["dtypes"]["neighbor_distances"] = "float32"
+                    manifest["dtypes"]["neighbor_resnums"] = "int32"
+                    manifest["dtypes"]["residue_embeddings"] = "float32"
+                    manifest["dtypes"]["residue_protein_keys"] = f"S{max_pid_len}"
+                    manifest["dtypes"]["residue_numbers_table"] = "int32"
+
+                elif 'neighbor_h5_indices' in h5f:
                     # V2 format
                     manifest["transformer_format"] = "v2_index_based"
                     manifest["paths"]["neighbor_h5_indices"] = str(neighbor_idx_path)
@@ -455,7 +563,37 @@ def _attach_memmaps(rank: int) -> Dict[str, torch.Tensor]:
         transformer_format = manifest.get("transformer_format", "v1_embedding_based")
         k_neighbors = manifest.get("knn_k", 3)
         
-        if transformer_format == "v2_index_based" and "neighbor_h5_indices" in paths:
+        if transformer_format == "v3_residue_table" and "neighbor_residue_indices" in paths:
+            log.info(f"[rank: {rank}] Loading v3 transformer format (residue table)")
+
+            neighbor_idx_mm = attach_np("neighbor_residue_indices")
+            neighbor_dist_mm = attach_np("neighbor_distances")
+            neighbor_resnum_mm = attach_np("neighbor_resnums")
+            residue_emb_mm = attach_np("residue_embeddings")
+            residue_key_mm = attach_np("residue_protein_keys")
+            residue_num_mm = attach_np("residue_numbers_table")
+
+            memmaps["neighbor_residue_indices"] = neighbor_idx_mm
+            memmaps["neighbor_distances"] = neighbor_dist_mm
+            memmaps["neighbor_resnums"] = neighbor_resnum_mm
+            memmaps["residue_embeddings"] = residue_emb_mm
+            memmaps["residue_protein_keys"] = residue_key_mm
+            memmaps["residue_numbers_table"] = residue_num_mm
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", ".*NumPy array is not writable.*")
+                shared_tensors["neighbor_residue_indices"] = torch.from_numpy(neighbor_idx_mm)
+                shared_tensors["neighbor_distances"] = torch.from_numpy(neighbor_dist_mm)
+                shared_tensors["neighbor_resnums"] = torch.from_numpy(neighbor_resnum_mm)
+                shared_tensors["residue_embeddings"] = torch.from_numpy(residue_emb_mm)
+                shared_tensors["residue_numbers_table"] = torch.from_numpy(residue_num_mm)
+
+            # Keep protein keys as numpy bytes (no torch tensor required)
+            shared_tensors["residue_protein_keys"] = residue_key_mm
+
+            log.info(f"[rank: {rank}] Transformer v3: neighbor shape {neighbor_idx_mm.shape}, residue table {residue_emb_mm.shape}")
+
+        elif transformer_format == "v2_index_based" and "neighbor_h5_indices" in paths:
             # V2 format: space-efficient indices
             log.info(f"[rank: {rank}] Loading v2 transformer format (index-based)")
             
@@ -601,8 +739,34 @@ class SharedMemoryDataset(Dataset):
             # Always include single ESM embedding
             sample['esm'] = torch.from_numpy(np.array(self.shared_tensors['esm'][global_idx])).float()
             
+            # ⭐ V3: Residue-table indices (new format)
+            if 'neighbor_residue_indices' in self.shared_tensors:
+                neighbor_indices = self.shared_tensors['neighbor_residue_indices'][global_idx]
+                neighbor_distances = self.shared_tensors['neighbor_distances'][global_idx]
+                neighbor_resnums = self.shared_tensors['neighbor_resnums'][global_idx]
+
+                residue_table = self.shared_tensors['residue_embeddings']
+                centre_embedding = np.array(self.shared_tensors['esm'][global_idx])
+
+                k = len(neighbor_indices)
+                esm_neighbors = np.zeros((k, residue_table.shape[1]), dtype=np.float32)
+                valid_mask = neighbor_indices >= 0
+                if valid_mask.any():
+                    esm_neighbors[valid_mask] = residue_table[neighbor_indices[valid_mask]]
+                if not valid_mask.all():
+                    esm_neighbors[~valid_mask] = centre_embedding
+
+                distances = np.array(neighbor_distances, dtype=np.float32)
+                distances[~valid_mask] = np.inf
+
+                sample['esm_neighbors'] = torch.from_numpy(esm_neighbors).float()
+                sample['neighbor_residue_indices'] = torch.from_numpy(np.array(neighbor_indices)).long()
+                sample['neighbor_distances'] = torch.from_numpy(distances).float()
+                sample['neighbor_resnums'] = torch.from_numpy(np.array(neighbor_resnums)).long()
+                sample['knn_aggregated'] = False
+
             # ⭐ V2: Reconstruct neighbor embeddings from indices
-            if 'neighbor_h5_indices' in self.shared_tensors:
+            elif 'neighbor_h5_indices' in self.shared_tensors:
                 # Space-efficient v2 format: indices → embeddings
                 neighbor_indices = self.shared_tensors['neighbor_h5_indices'][global_idx]  # [k]
                 neighbor_distances = self.shared_tensors['neighbor_distances'][global_idx]  # [k]
