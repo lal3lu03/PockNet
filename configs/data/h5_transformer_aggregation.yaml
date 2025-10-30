@@ -10,7 +10,7 @@ _target_: src.data.shared_memory_datamodule_v2.TrueSharedMemoryDataModule
 
 # H5 file configuration - TRANSFORMER MODE
 # Relative paths are resolved against PROJECT_ROOT
-h5_filename: "data/h5/all_train_transformer_v2_optimized.h5"
+h5_filename: "data/h5/all_train_transformer_v2_fixed.h5"
 data_dir: ""
 
 # DataLoader configuration - Optimized for 3×Volta GPUs (TITAN V 12GB)

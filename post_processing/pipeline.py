@@ -72,6 +72,11 @@ class PostProcessingPipeline:
             # Update residue predictions
             for i, residue in enumerate(residue_data):
                 residue.prob = smoothed_preds[i]
+            
+            # Ensure downstream steps see the smoothed distribution
+            predictions = smoothed_preds
+        else:
+            predictions = np.array([r.prob for r in residue_data])
         
         # Step 2: Threshold selection
         threshold = self._select_threshold(predictions)

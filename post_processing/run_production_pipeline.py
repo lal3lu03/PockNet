@@ -34,6 +34,7 @@ from post_processing.p2rank_like import (
     pockets_to_csv,
 )
 from post_processing.score_transformers import ScoreTransformer, load_score_transformer
+from post_processing.visualization import save_pocket_visualization
 
 logger = logging.getLogger("pocknet.p2rank_production")
 
@@ -313,6 +314,9 @@ def run_production_pipeline(
     max_pockets_all: Optional[int] = None,
     calibration_path: Optional[Path] = None,
     fit_calibration_path: Optional[Path] = None,
+    visualize_pockets: bool = False,
+    vis_max_pockets: int = 5,
+    vis_max_points: int = 6000,
 ) -> Dict[str, Dict[str, float]]:
     """
     Execute the full inference + post-processing pipeline.
@@ -385,6 +389,10 @@ def run_production_pipeline(
 
     pockets_output_dir = output_root / "cases"
     pockets_output_dir.mkdir(parents=True, exist_ok=True)
+
+    vis_output_dir = output_root / "visualizations" if visualize_pockets else None
+    if vis_output_dir is not None:
+        vis_output_dir.mkdir(parents=True, exist_ok=True)
 
     results: Dict[str, Dict[str, float]] = {}
     total_pockets_eval = 0
@@ -506,6 +514,20 @@ def run_production_pipeline(
         pockets_eval = item["pockets_eval"]  # type: ignore[assignment]
         csv_text = item["csv_text"]  # type: ignore[assignment]
         _write_pockets_csv(pockets_output_dir, protein_id, csv_text)
+
+        if vis_output_dir is not None:
+            try:
+                save_pocket_visualization(
+                    protein_id,
+                    item["coords"],  # type: ignore[arg-type]
+                    pockets,
+                    item["gt_pockets"],  # type: ignore[arg-type]
+                    vis_output_dir,
+                    max_points=vis_max_points,
+                    max_pockets=vis_max_pockets,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to create visualization for %s: %s", protein_id, exc)
 
         total_pockets_eval += len(pockets_eval)
         total_pockets_all += len(pockets)
@@ -718,6 +740,23 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=None,
         help="Fit Platt calibration on this run and save to the given path.",
     )
+    parser.add_argument(
+        "--visualize-pockets",
+        action="store_true",
+        help="Write PNG visualizations comparing predicted and ground-truth pockets.",
+    )
+    parser.add_argument(
+        "--vis-max-pockets",
+        type=int,
+        default=5,
+        help="Maximum number of pockets to visualise per protein (per panel).",
+    )
+    parser.add_argument(
+        "--vis-max-points",
+        type=int,
+        default=6000,
+        help="Maximum number of SAS points to show as grey background per protein.",
+    )
     return parser.parse_args(argv)
 
 
@@ -773,6 +812,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_pockets_all=args.max_pockets,
             calibration_path=args.calibration,
             fit_calibration_path=args.fit_calibration,
+            visualize_pockets=args.visualize_pockets,
+            vis_max_pockets=max(1, args.vis_max_pockets),
+            vis_max_points=max(100, args.vis_max_points),
         )
         return 0
     except Exception as exc:  # noqa: BLE001

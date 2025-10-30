@@ -128,6 +128,8 @@ wandb/
 /runs/
 wandb/
 deprecated/
+tex/
+outputs/
 
 # Shell history (created in repo root during remote sessions)
 bash_history
@@ -135,3 +137,4 @@ bash_history.pretty.txt
 
 todos.txt
 CLEANUP_SUMMARY.md
+

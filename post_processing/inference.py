@@ -450,9 +450,41 @@ class ModelInference:
                 aggregation_mode = f.attrs.get("aggregation_mode", "mean")
                 if isinstance(aggregation_mode, bytes):
                     aggregation_mode = aggregation_mode.decode("utf-8")
-                transformer_mode = aggregation_mode == "transformer" or "neighbor_h5_indices" in f
+
+                transformer_format = f.attrs.get("transformer_format", None)
+                if isinstance(transformer_format, bytes):
+                    transformer_format = transformer_format.decode("utf-8")
+
+                neighbor_mode = None  # {'residue_table', 'h5', 'materialized'}
+                neighbor_indices_ds = None
+                esm_neighbors_ds = None
+
+                if "neighbor_residue_indices" in f:
+                    neighbor_mode = "residue_table"
+                    neighbor_indices_ds = f["neighbor_residue_indices"]
+                elif "neighbor_h5_indices" in f:
+                    neighbor_mode = "h5"
+                    neighbor_indices_ds = f["neighbor_h5_indices"]
+                elif "esm_neighbors" in f:
+                    neighbor_mode = "materialized"
+                    esm_neighbors_ds = f["esm_neighbors"]
+
+                neighbor_dist_ds = f["neighbor_distances"] if "neighbor_distances" in f else None
+                neighbor_resnum_ds = f["neighbor_resnums"] if "neighbor_resnums" in f else None
+                residue_embeddings_ds = f["residue_embeddings"] if "residue_embeddings" in f else None
+
+                transformer_mode = aggregation_mode == "transformer" or neighbor_mode is not None
+
                 if transformer_mode:
-                    logger.info("Detected transformer aggregation mode (neighbor attention)")
+                    mode_desc = {
+                        "residue_table": "transformer (residue table indices)",
+                        "h5": "transformer (sample indices)",
+                        "materialized": "transformer (precomputed neighbors)",
+                        None: "transformer",
+                    }[neighbor_mode]
+                    if transformer_format:
+                        mode_desc = f"{mode_desc}, format={transformer_format}"
+                    logger.info(f"Detected {mode_desc}")
                 else:
                     logger.info("Detected mean aggregation mode (pre-aggregated embeddings)")
 
@@ -461,10 +493,6 @@ class ModelInference:
                 residue_numbers_ds = f["residue_numbers"]
                 protein_keys_raw = f["protein_keys"][:]
                 protein_keys = [key.decode() if isinstance(key, bytes) else str(key) for key in protein_keys_raw]
-
-                neighbor_idx_ds = f["neighbor_h5_indices"] if "neighbor_h5_indices" in f else None
-                neighbor_dist_ds = f["neighbor_distances"] if "neighbor_distances" in f else None
-                neighbor_resnum_ds = f["neighbor_resnums"] if "neighbor_resnums" in f else None
 
                 protein_to_indices: Dict[str, List[int]] = {}
                 for idx, protein_id in enumerate(protein_keys):
@@ -498,20 +526,43 @@ class ModelInference:
                         protein_esm = esm_data[idx_array]
                         protein_resnums = residue_numbers_ds[idx_array]
 
-                        if transformer_mode:
-                            if neighbor_idx_ds is None or neighbor_dist_ds is None or neighbor_resnum_ds is None:
-                                logger.warning("Transformer mode requested but neighbor datasets missing; falling back to mean aggregation.")
-                                transformer_mode = False
-                                protein_neighbor_idx = protein_neighbor_dist = protein_neighbor_res = None
-                                local_index_map = {}
-                            else:
-                                protein_neighbor_idx = neighbor_idx_ds[idx_array].astype(np.int64, copy=False)
-                                protein_neighbor_dist = neighbor_dist_ds[idx_array].astype(np.float32, copy=False)
-                                protein_neighbor_res = neighbor_resnum_ds[idx_array].astype(np.int64, copy=False)
-                                local_index_map = {int(global_idx): local_idx for local_idx, global_idx in enumerate(idx_array)}
-                        else:
+                        current_neighbor_mode = neighbor_mode if transformer_mode else None
+
+                        if current_neighbor_mode == "materialized":
+                            if esm_neighbors_ds is None or neighbor_dist_ds is None or neighbor_resnum_ds is None:
+                                logger.warning("Materialized neighbor data missing; falling back to mean aggregation.")
+                                current_neighbor_mode = None
+                        elif current_neighbor_mode in {"residue_table", "h5"}:
+                            if neighbor_indices_ds is None or neighbor_dist_ds is None or neighbor_resnum_ds is None:
+                                logger.warning("Neighbor index datasets incomplete; falling back to mean aggregation.")
+                                current_neighbor_mode = None
+                            elif current_neighbor_mode == "residue_table" and residue_embeddings_ds is None:
+                                logger.warning("Residue table embeddings missing; falling back to mean aggregation.")
+                                current_neighbor_mode = None
+
+                        residue_lookup_indices: Optional[np.ndarray] = None
+                        residue_lookup_embeddings: Optional[np.ndarray] = None
+
+                        if not transformer_mode or current_neighbor_mode is None:
                             protein_neighbor_idx = protein_neighbor_dist = protein_neighbor_res = None
                             local_index_map = {}
+                        elif current_neighbor_mode == "materialized":
+                            protein_neighbor_idx = None
+                            protein_neighbor_dist = neighbor_dist_ds[idx_array].astype(np.float32, copy=False)
+                            protein_neighbor_res = neighbor_resnum_ds[idx_array].astype(np.int64, copy=False)
+                            local_index_map = {}
+                        else:
+                            protein_neighbor_idx = neighbor_indices_ds[idx_array].astype(np.int64, copy=False)
+                            protein_neighbor_dist = neighbor_dist_ds[idx_array].astype(np.float32, copy=False)
+                            protein_neighbor_res = neighbor_resnum_ds[idx_array].astype(np.int64, copy=False)
+                            local_index_map = {}
+                            if current_neighbor_mode == "h5":
+                                local_index_map = {int(global_idx): local_idx for local_idx, global_idx in enumerate(idx_array)}
+                            elif current_neighbor_mode == "residue_table":
+                                valid_global = protein_neighbor_idx[protein_neighbor_idx >= 0]
+                                if valid_global.size > 0 and residue_embeddings_ds is not None:
+                                    residue_lookup_indices = np.unique(valid_global)
+                                    residue_lookup_embeddings = residue_embeddings_ds[residue_lookup_indices].astype(np.float32, copy=False)
 
                         protein_predictions: List[np.ndarray] = []
 
@@ -523,63 +574,97 @@ class ModelInference:
 
                             tab_tensor = torch.from_numpy(center_tab).float().to(self.device)
                             esm_tensor = torch.from_numpy(center_esm).float().to(self.device)
+                            center_expand = center_esm[:, None, :]
 
-                            if transformer_mode and protein_neighbor_idx is not None:
-                                idx_chunk = protein_neighbor_idx[start:end]
-                                dist_chunk = protein_neighbor_dist[start:end]
-                                res_chunk = protein_neighbor_res[start:end]
+                            if transformer_mode and current_neighbor_mode is not None:
                                 center_indices = idx_array[start:end]
                                 center_resnums = protein_resnums[start:end]
-
-                                valid_mask = idx_chunk >= 0
-                                idx_chunk_local = np.full_like(idx_chunk, fill_value=-1, dtype=np.int64)
-
-                                if valid_mask.any():
-                                    unique_vals = np.unique(idx_chunk[valid_mask])
-                                    for val in unique_vals:
-                                        local_pos = local_index_map.get(int(val))
-                                        if local_pos is not None:
-                                            idx_chunk_local[idx_chunk == val] = local_pos
-
-                                neighbors_chunk = np.zeros(
-                                    (idx_chunk.shape[0], idx_chunk.shape[1], protein_esm.shape[1]),
-                                    dtype=np.float32,
-                                )
-
-                                flat_neighbors = neighbors_chunk.reshape(-1, protein_esm.shape[1])
-                                flat_local = idx_chunk_local.reshape(-1)
-                                mask_local = flat_local >= 0
-                                if mask_local.any():
-                                    flat_neighbors[mask_local] = protein_esm[flat_local[mask_local]]
-
-                                # Handle neighbors outside current protein
-                                cross_mask = (idx_chunk >= 0) & (idx_chunk_local < 0)
-                                if np.any(cross_mask):
-                                    cross_positions = np.argwhere(cross_mask)
-                                    for row_idx, neigh_idx in cross_positions:
-                                        global_idx = int(idx_chunk[row_idx, neigh_idx])
-                                        flat_neighbors[row_idx * idx_chunk.shape[1] + neigh_idx] = esm_data[global_idx]
-
-                                # Fallback for missing neighbors -> use centre embedding
-                                if np.any(~valid_mask):
-                                    neighbors_chunk[~valid_mask] = center_esm[:, None, :][~valid_mask]
-
-                                dist_chunk = dist_chunk.astype(np.float32, copy=False)
-                                dist_chunk[~valid_mask] = np.inf
-                                res_chunk = np.where(valid_mask, res_chunk, center_resnums[:, None])
-
-                                neighbor_emb_tensor = torch.from_numpy(neighbors_chunk).float().to(self.device)
-                                neighbor_dist_tensor = torch.from_numpy(dist_chunk).float().to(self.device)
-                                neighbor_res_tensor = torch.from_numpy(res_chunk).long().to(self.device)
 
                                 batch_dict = {
                                     "tabular": tab_tensor,
                                     "esm": esm_tensor,
-                                    "esm_neighbors": neighbor_emb_tensor,
-                                    "neighbor_distances": neighbor_dist_tensor,
-                                    "neighbor_resnums": neighbor_res_tensor,
                                     "aggregation_mode": "transformer",
                                 }
+
+                                if current_neighbor_mode == "materialized":
+                                    neighbors_chunk = np.array(esm_neighbors_ds[idx_array[start:end]], dtype=np.float32, copy=True)
+                                    dist_chunk = np.array(protein_neighbor_dist[start:end], dtype=np.float32, copy=True)
+                                    res_chunk = np.array(protein_neighbor_res[start:end], dtype=np.int64, copy=True)
+                                    valid_mask = res_chunk >= 0
+                                    if np.any(~valid_mask):
+                                        neighbors_chunk[~valid_mask] = center_expand[~valid_mask]
+                                    dist_chunk[~valid_mask] = np.inf
+                                    res_chunk = np.where(valid_mask, res_chunk, center_resnums[:, None])
+                                    neighbor_tensor = torch.from_numpy(neighbors_chunk).float().to(self.device)
+                                    dist_tensor = torch.from_numpy(dist_chunk).float().to(self.device)
+                                    res_tensor = torch.from_numpy(res_chunk).long().to(self.device)
+                                    batch_dict.update({
+                                        "esm_neighbors": neighbor_tensor,
+                                        "neighbor_distances": dist_tensor,
+                                        "neighbor_resnums": res_tensor,
+                                    })
+                                else:
+                                    idx_chunk = np.array(protein_neighbor_idx[start:end], dtype=np.int64, copy=True)
+                                    dist_chunk = np.array(protein_neighbor_dist[start:end], dtype=np.float32, copy=True)
+                                    res_chunk = np.array(protein_neighbor_res[start:end], dtype=np.int64, copy=True)
+
+                                    valid_mask = idx_chunk >= 0
+                                    neighbors_chunk = np.zeros(
+                                        (idx_chunk.shape[0], idx_chunk.shape[1], protein_esm.shape[1]),
+                                        dtype=np.float32,
+                                    )
+                                    center_expand = center_esm[:, None, :]
+
+                                    if current_neighbor_mode == "h5":
+                                        idx_chunk_local = np.full_like(idx_chunk, fill_value=-1, dtype=np.int64)
+                                        if valid_mask.any():
+                                            unique_vals = np.unique(idx_chunk[valid_mask])
+                                            for val in unique_vals:
+                                                local_pos = local_index_map.get(int(val))
+                                                if local_pos is not None:
+                                                    idx_chunk_local[idx_chunk == val] = local_pos
+
+                                        flat_neighbors = neighbors_chunk.reshape(-1, protein_esm.shape[1])
+                                        flat_local = idx_chunk_local.reshape(-1)
+                                        mask_local = flat_local >= 0
+                                        if mask_local.any():
+                                            flat_neighbors[mask_local] = protein_esm[flat_local[mask_local]]
+
+                                        # Handle neighbors outside current protein
+                                        cross_mask = (idx_chunk >= 0) & (idx_chunk_local < 0)
+                                        if np.any(cross_mask):
+                                            cross_positions = np.argwhere(cross_mask)
+                                            for row_idx, neigh_idx in cross_positions:
+                                                global_idx = int(idx_chunk[row_idx, neigh_idx])
+                                                flat_neighbors[row_idx * idx_chunk.shape[1] + neigh_idx] = esm_data[global_idx]
+                                    else:  # residue_table
+                                        if valid_mask.any() and residue_lookup_indices is not None and residue_lookup_embeddings is not None:
+                                            flat_indices = idx_chunk[valid_mask]
+                                            positions = np.searchsorted(residue_lookup_indices, flat_indices)
+                                            neighbors_chunk[valid_mask] = residue_lookup_embeddings[positions]
+
+                                    # Fallback for missing neighbors -> use centre embedding
+                                    if np.any(~valid_mask):
+                                        neighbors_chunk[~valid_mask] = center_expand[~valid_mask]
+
+                                    dist_chunk = dist_chunk.astype(np.float32, copy=False)
+                                    dist_chunk[~valid_mask] = np.inf
+                                    res_chunk = np.where(valid_mask, res_chunk, center_resnums[:, None])
+
+                                    neighbor_tensor = torch.from_numpy(neighbors_chunk).float().to(self.device)
+                                    dist_tensor = torch.from_numpy(dist_chunk).float().to(self.device)
+                                    res_tensor = torch.from_numpy(res_chunk).long().to(self.device)
+
+                                    batch_dict.update({
+                                        "esm_neighbors": neighbor_tensor,
+                                        "neighbor_distances": dist_tensor,
+                                        "neighbor_resnums": res_tensor,
+                                    })
+
+                                    if current_neighbor_mode == "residue_table":
+                                        batch_dict["neighbor_residue_indices"] = torch.from_numpy(idx_chunk).long().to(self.device)
+                                    elif current_neighbor_mode == "h5":
+                                        batch_dict["neighbor_h5_indices"] = torch.from_numpy(idx_chunk).long().to(self.device)
 
                                 with torch.no_grad():
                                     batch_logits = self.model(tab_tensor, batch=batch_dict)
