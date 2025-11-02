@@ -15,7 +15,7 @@ import fcntl
 import re
 import warnings
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, Callable, List
+from typing import Optional, Tuple, Dict, Any, Callable, List, Set
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from lightning.pytorch import LightningDataModule
@@ -925,6 +925,8 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         pdb_base_dir: str = None,
         hard_positive_indices_path: Optional[str] = None,
         hard_positive_repeat: int = 1,
+        train_indices_override_path: Optional[str] = None,
+        train_override_shuffle_seed: Optional[int] = None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -985,6 +987,26 @@ class TrueSharedMemoryDataModule(LightningDataModule):
             self.hard_positive_indices_path = None
         self.hard_positive_repeat = int(max(1, hard_positive_repeat))
         self._hard_positive_selected = 0
+
+        if train_indices_override_path:
+            override_path = Path(train_indices_override_path)
+            if not override_path.is_absolute():
+                candidate_roots = [self._base_data_dir, project_root]
+                resolved = None
+                for root in candidate_roots:
+                    candidate = root / train_indices_override_path
+                    if candidate.exists():
+                        resolved = candidate
+                        break
+                override_path = resolved if resolved is not None else project_root / override_path
+            self.train_indices_override_path = override_path
+        else:
+            self.train_indices_override_path = None
+        self.train_override_shuffle_seed = (
+            int(train_override_shuffle_seed)
+            if train_override_shuffle_seed is not None
+            else None
+        )
         
         # Will be populated during setup
         self.shared_tensors = None
@@ -1130,7 +1152,78 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         else:
             log.info("✅ Verified: No BU48 in train/val and no train↔val protein overlap.")
 
+        self._apply_train_indices_override()
         self._apply_hard_positive_replay()
+    
+    def _apply_train_indices_override(self):
+        """Replace training indices with curated list if provided."""
+        if self.train_indices_override_path is None:
+            return
+        path = self.train_indices_override_path
+        if not path.exists():
+            log.warning(f"Train override file not found: {path}")
+            return
+        try:
+            with open(path, "r") as f:
+                payload = json.load(f)
+        except Exception as e:
+            log.warning(f"Failed to load train override file {path}: {e}")
+            return
+        if isinstance(payload, dict):
+            override = payload.get("train_indices") or payload.get("indices")
+            groups = payload.get("groups")
+            metadata = payload.get("metadata")
+        else:
+            override = payload
+            groups = None
+            metadata = None
+        if override is None:
+            log.warning(
+                f"Train override payload from {path} missing 'train_indices' or 'indices' key."
+            )
+            return
+        override_array = np.array(override, dtype=np.int64)
+        if override_array.size == 0:
+            log.warning(f"Train override file {path} is empty; keeping original train indices.")
+            return
+
+        base_train: Set[int] = set(int(x) for x in np.array(self.train_indices, dtype=np.int64))
+        mask = np.array([int(idx) in base_train for idx in override_array], dtype=bool)
+        filtered = override_array[mask]
+        dropped = int(override_array.size - filtered.size)
+        if filtered.size == 0:
+            log.warning(
+                "No indices from %s overlapped with the baseline train split; "
+                "retaining original train indices.",
+                path,
+            )
+            return
+
+        seed = self.train_override_shuffle_seed
+        if seed is None:
+            seed = self.val_split_seed + 11
+        rng = np.random.default_rng(seed)
+        rng.shuffle(filtered)
+        self.train_indices = filtered.astype(np.int64, copy=False)
+        log.info(
+            "Curated train override applied: %d samples (dropped %d non-train indices) from %s",
+            len(self.train_indices),
+            dropped,
+            path,
+        )
+
+        if groups and isinstance(groups, dict):
+            summaries = []
+            for name, values in groups.items():
+                arr = np.array(values, dtype=np.int64)
+                overlap = sum(int(v) in base_train for v in arr)
+                summaries.append(f"{name}={overlap}")
+            if summaries:
+                log.info("Curated group summary: %s", ", ".join(summaries))
+
+        if metadata and isinstance(metadata, dict):
+            for key, value in metadata.items():
+                log.info(f"Curated metadata — {key}: {value}")
     
     def _apply_hard_positive_replay(self):
         """Optionally replicate hard positive examples to emphasize them during training."""
