@@ -267,6 +267,10 @@ class EsmTabularModule(LightningModule):
         aux_neighbor_head_weight_end: Optional[float] = None,
         aux_neighbor_head_schedule_epochs: int = 0,
         aux_distance_temperature: float = 5.0,
+        freeze_tabular_encoder: bool = False,
+        freeze_center_encoder: bool = False,
+        freeze_context_encoder: Optional[bool] = None,
+        freeze_neighbor_encoder: bool = False,
         optimizer: Optional[Dict[str, Any]] = None,
         scheduler: Optional[Dict[str, Any]] = None,
         **kwargs
@@ -315,6 +319,15 @@ class EsmTabularModule(LightningModule):
             self.context_blend_norm = None
             self.center_dropout = None
             self.gate_mlp = None
+
+        def _freeze_module(module: Optional[nn.Module], label: str) -> None:
+            if module is None:
+                return
+            param_count = 0
+            for param in module.parameters():
+                param.requires_grad = False
+                param_count += param.numel()
+            log.info(f"Freezing {label} parameters ({param_count:,} weights)")
         
         # Encoders
         self.tabular_encoder = TabularEncoder(tabular_dim, hidden_dims, dropout)
@@ -361,6 +374,23 @@ class EsmTabularModule(LightningModule):
             float(neighbor_context_scale_end)
             if neighbor_context_scale_end is not None else float(neighbor_context_scale)
         )
+        freeze_context_flag = (
+            freeze_context_encoder
+            if freeze_context_encoder is not None
+            else freeze_center_encoder
+        )
+        if freeze_tabular_encoder:
+            _freeze_module(self.tabular_encoder, "tabular_encoder")
+        if freeze_center_encoder:
+            _freeze_module(self.center_encoder, "center_encoder")
+        if freeze_context_flag and self.context_encoder is not None:
+            _freeze_module(self.context_encoder, "context_encoder")
+        if freeze_neighbor_encoder:
+            _freeze_module(self.neighbor_encoder, "neighbor_attention")
+            _freeze_module(self.gate_mlp, "neighbor_gate")
+            _freeze_module(self.center_norm, "center_norm")
+            _freeze_module(self.neighbor_norm, "neighbor_norm")
+            _freeze_module(self.context_blend_norm, "context_blend_norm")
         self.aux_neighbor_head_weight = float(max(aux_neighbor_head_weight, 0.0))
         self.aux_neighbor_head_weight_start = (
             float(aux_neighbor_head_weight_start)
@@ -1106,38 +1136,52 @@ class EsmTabularModule(LightningModule):
     def configure_optimizers(self):
         opt = self.hparams.optimizer(params=self.parameters())
 
-        if self.hparams.scheduler is None:
+        scheduler_cfg = getattr(self.hparams, "scheduler", None)
+        if scheduler_cfg is None:
             return opt
 
-        # Prefer a user-provided total_steps; otherwise use Lightning's estimate
-        total_steps = self.hparams.scheduler.keywords.get("total_steps")
-        if total_steps is None:
-            # Available in PL 2.x at configure_optimizers time
-            est = getattr(self.trainer, "estimated_stepping_batches", None)
-            if est is None or est <= 0:
-                # Final fallback if something unexpected happens
-                # (better to over-estimate than under-estimate)
-                if self.trainer.num_training_batches:
-                    steps_per_epoch = math.ceil(
-                        int(self.trainer.num_training_batches) /
-                        max(1, int(self.trainer.accumulate_grad_batches or 1))
-                    )
-                    est = steps_per_epoch * int(self.trainer.max_epochs)
-                else:
-                    est = int(self.trainer.max_epochs) * 1000  # safe overestimate
-            total_steps = int(est)
-            self.print(f"✅ OneCycleLR total_steps set to {total_steps}")
+        keywords = getattr(scheduler_cfg, "keywords", {})
 
-        sched = torch.optim.lr_scheduler.OneCycleLR(
-            opt,
-            max_lr=self.hparams.scheduler.keywords["max_lr"],
-            total_steps=total_steps,                      # <— key change
-            pct_start=self.hparams.scheduler.keywords.get("pct_start", 0.3),
-            anneal_strategy=self.hparams.scheduler.keywords.get("anneal_strategy", "cos"),
-            div_factor=self.hparams.scheduler.keywords.get("div_factor", 25.0),
-            final_div_factor=self.hparams.scheduler.keywords.get("final_div_factor", 1e4),
-        )
-        return {"optimizer": opt, "lr_scheduler": {"scheduler": sched, "interval": "step"}}
+        if "max_lr" in keywords:
+            # OneCycleLR branch (backward compatibility)
+            total_steps = keywords.get("total_steps")
+            if total_steps is None:
+                est = getattr(self.trainer, "estimated_stepping_batches", None)
+                if est is None or est <= 0:
+                    if self.trainer.num_training_batches:
+                        steps_per_epoch = math.ceil(
+                            int(self.trainer.num_training_batches)
+                            / max(1, int(self.trainer.accumulate_grad_batches or 1))
+                        )
+                        est = steps_per_epoch * int(self.trainer.max_epochs)
+                    else:
+                        est = int(self.trainer.max_epochs) * 1000  # safe fallback
+                total_steps = int(est)
+                self.print(f"✅ OneCycleLR total_steps set to {total_steps}")
+
+            sched = torch.optim.lr_scheduler.OneCycleLR(
+                opt,
+                max_lr=keywords["max_lr"],
+                total_steps=total_steps,
+                pct_start=keywords.get("pct_start", 0.3),
+                anneal_strategy=keywords.get("anneal_strategy", "cos"),
+                div_factor=keywords.get("div_factor", 25.0),
+                final_div_factor=keywords.get("final_div_factor", 1e4),
+            )
+            return {"optimizer": opt, "lr_scheduler": {"scheduler": sched, "interval": "step"}}
+
+        # Generic scheduler branch
+        scheduler = scheduler_cfg(opt)
+        interval = getattr(self.hparams, "scheduler_interval", "epoch")
+        frequency = getattr(self.hparams, "scheduler_frequency", 1)
+        return {
+            "optimizer": opt,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": interval,
+                "frequency": frequency,
+            },
+        }
 
     def on_train_epoch_start(self):
         super().on_train_epoch_start()

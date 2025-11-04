@@ -14,6 +14,7 @@ import argparse
 import concurrent.futures
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -25,6 +26,10 @@ import numpy as np
 from tqdm import tqdm
 
 from post_processing.inference import ModelInference
+from post_processing.metrics import (
+    evaluate_dbscan_success_metrics,
+    plot_dbscan_success_rates,
+)
 from post_processing.p2rank_like import (
     P2RankParams,
     P2RankPostProcessor,
@@ -34,7 +39,11 @@ from post_processing.p2rank_like import (
     pockets_to_csv,
 )
 from post_processing.score_transformers import ScoreTransformer, load_score_transformer
-from post_processing.visualization import save_pocket_visualization
+from post_processing.visualization import (
+    compose_case_study_grid,
+    save_pocket_visualization,
+    save_pymol_script,
+)
 
 logger = logging.getLogger("pocknet.p2rank_production")
 
@@ -317,6 +326,14 @@ def run_production_pipeline(
     visualize_pockets: bool = False,
     vis_max_pockets: int = 5,
     vis_max_points: int = 6000,
+    case_study_panels: int = 0,
+    compute_dbscan_metrics: bool = False,
+    dbscan_eps: float = 3.0,
+    dbscan_min_samples: int = 5,
+    dbscan_threshold: Optional[float] = None,
+    dcc_success_threshold: float = 4.0,
+    dca_success_threshold: float = 4.0,
+    dbscan_topk: Tuple[int, ...] = (1, 2, 3),
 ) -> Dict[str, Dict[str, float]]:
     """
     Execute the full inference + post-processing pipeline.
@@ -393,6 +410,10 @@ def run_production_pipeline(
     vis_output_dir = output_root / "visualizations" if visualize_pockets else None
     if vis_output_dir is not None:
         vis_output_dir.mkdir(parents=True, exist_ok=True)
+        pymol_output_dir = vis_output_dir / "pymol_scripts"
+        pymol_output_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        pymol_output_dir = None
 
     results: Dict[str, Dict[str, float]] = {}
     total_pockets_eval = 0
@@ -529,6 +550,20 @@ def run_production_pipeline(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to create visualization for %s: %s", protein_id, exc)
 
+        if pymol_output_dir is not None:
+            try:
+                save_pymol_script(
+                    protein_id,
+                    item["coords"],  # type: ignore[arg-type]
+                    pockets,
+                    item["gt_pockets"],  # type: ignore[arg-type]
+                    pymol_output_dir,
+                    max_pockets=vis_max_pockets,
+                    max_background_points=vis_max_points,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to create PyMOL script for %s: %s", protein_id, exc)
+
         total_pockets_eval += len(pockets_eval)
         total_pockets_all += len(pockets)
         pocket_scores_eval.extend([p.score for p in pockets_eval])
@@ -555,6 +590,51 @@ def run_production_pipeline(
             "probs": item["probs"],
             "gt_pockets": item["gt_pockets"],
         }
+
+    case_study_tiles: List[Tuple[Path, str]] = []
+    if case_study_panels > 0 and vis_output_dir is not None and results:
+        sorted_success = sorted(
+            results.items(),
+            key=lambda kv: kv[1].get("mean_gt_iou_default", 0.0),
+            reverse=True,
+        )
+        sorted_failure = sorted(
+            results.items(),
+            key=lambda kv: kv[1].get("mean_gt_iou_default", 0.0),
+        )
+        success_slots = min(len(sorted_success), max(1, math.ceil(case_study_panels / 2)))
+        failure_slots = max(0, case_study_panels - success_slots)
+        used_ids = set()
+
+        for pid, entry in sorted_success:
+            if len(case_study_tiles) >= success_slots:
+                break
+            img_path = vis_output_dir / f"{pid}_pockets.png"
+            if not img_path.exists():
+                continue
+            used_ids.add(pid)
+            score = entry.get("mean_gt_iou_default", 0.0)
+            case_study_tiles.append((img_path, f"{pid} • IoU={score:.2f} (success)"))
+
+        if failure_slots > 0:
+            for pid, entry in sorted_failure:
+                if pid in used_ids:
+                    continue
+                img_path = vis_output_dir / f"{pid}_pockets.png"
+                if not img_path.exists():
+                    continue
+                used_ids.add(pid)
+                score = entry.get("mean_gt_iou_default", 0.0)
+                case_study_tiles.append((img_path, f"{pid} • IoU={score:.2f} (failure)"))
+                if len(case_study_tiles) >= case_study_panels:
+                    break
+
+        if case_study_tiles:
+            compose_case_study_grid(
+                case_study_tiles,
+                vis_output_dir / "case_study_grid.png",
+                ncols=min(len(case_study_tiles), case_study_panels),
+            )
 
     n_proteins = len(results)
     metrics = {
@@ -615,6 +695,29 @@ def run_production_pipeline(
             metrics["best_threshold"] = best_entry["threshold"]
             metrics["best_threshold_iou"] = best_entry["mean_gt_iou"]
             _write_threshold_csv(output_root / "summary", threshold_sweep_results)
+
+    dbscan_results: Optional[Dict[str, object]] = None
+    if compute_dbscan_metrics:
+        threshold_for_dbscan = dbscan_threshold if dbscan_threshold is not None else params.pred_point_threshold
+        dbscan_results = evaluate_dbscan_success_metrics(
+            protein_cache=protein_cache,
+            threshold=threshold_for_dbscan,
+            eps=dbscan_eps,
+            min_samples=dbscan_min_samples,
+            dcc_threshold=dcc_success_threshold,
+            dca_threshold=dca_success_threshold,
+            topk=dbscan_topk,
+        )
+        summary_dir = output_root / "summary"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        (summary_dir / "dbscan_metrics.json").write_text(json.dumps(dbscan_results, indent=2) + "\n")
+        plot_dbscan_success_rates(
+            dbscan_results["aggregate"],  # type: ignore[arg-type]
+            summary_dir / "dbscan_success.png",
+        )
+        for key, value in dbscan_results["aggregate"].items():  # type: ignore[union-attr]
+            if isinstance(value, (int, float)):
+                metrics[f"dbscan_{key}"] = value
 
     _write_summary(output_root / "summary", metrics)
     _write_per_protein_metrics(output_root / "summary", results)
@@ -757,6 +860,53 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=6000,
         help="Maximum number of SAS points to show as grey background per protein.",
     )
+    parser.add_argument(
+        "--case-study-panels",
+        type=int,
+        default=0,
+        help="Compose this many qualitative panels (mix of successes/failures) from generated visualisations.",
+    )
+    parser.add_argument(
+        "--compute-dbscan-metrics",
+        action="store_true",
+        help="Cluster predictions with DBSCAN and report DCC/DCA-style success metrics.",
+    )
+    parser.add_argument(
+        "--dbscan-eps",
+        type=float,
+        default=3.0,
+        help="DBSCAN epsilon (Å) for clustering residue-level predictions.",
+    )
+    parser.add_argument(
+        "--dbscan-min-samples",
+        type=int,
+        default=5,
+        help="Minimum samples per DBSCAN cluster.",
+    )
+    parser.add_argument(
+        "--dbscan-threshold",
+        type=float,
+        default=None,
+        help="Probability threshold for selecting residues before DBSCAN (default: pred threshold).",
+    )
+    parser.add_argument(
+        "--dcc-threshold",
+        type=float,
+        default=4.0,
+        help="Success criterion (Å) for distance-to-centre (DCC) evaluation.",
+    )
+    parser.add_argument(
+        "--dca-threshold",
+        type=float,
+        default=4.0,
+        help="Success criterion (Å) for distance-of-closest-approach (DCA) evaluation.",
+    )
+    parser.add_argument(
+        "--dbscan-topk",
+        type=str,
+        default="1,2,3",
+        help="Comma-separated list of top-K values for success rate reporting (e.g. '1,3,5').",
+    )
     return parser.parse_args(argv)
 
 
@@ -791,6 +941,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.cluster_dist is not None:
             base_params.pred_clustering_dist = args.cluster_dist
 
+        try:
+            dbscan_topk = tuple(
+                sorted(
+                    {int(tok.strip()) for tok in args.dbscan_topk.split(",") if tok.strip()},
+                    key=int,
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(f"Invalid --dbscan-topk specification: {args.dbscan_topk}") from exc
+        if not dbscan_topk:
+            dbscan_topk = (1, 2, 3)
+
         run_production_pipeline(
             checkpoint=args.checkpoint,
             h5_path=args.h5,
@@ -815,6 +977,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             visualize_pockets=args.visualize_pockets,
             vis_max_pockets=max(1, args.vis_max_pockets),
             vis_max_points=max(100, args.vis_max_points),
+            case_study_panels=max(0, args.case_study_panels),
+            compute_dbscan_metrics=args.compute_dbscan_metrics,
+            dbscan_eps=args.dbscan_eps,
+            dbscan_min_samples=max(1, args.dbscan_min_samples),
+            dbscan_threshold=args.dbscan_threshold,
+            dcc_success_threshold=args.dcc_threshold,
+            dca_success_threshold=args.dca_threshold,
+            dbscan_topk=dbscan_topk,
         )
         return 0
     except Exception as exc:  # noqa: BLE001

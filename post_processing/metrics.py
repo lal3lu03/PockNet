@@ -20,8 +20,10 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.cluster import DBSCAN
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -590,6 +592,229 @@ def plot_pocket_metrics(metrics_dict: Dict[str, Any],
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         logger.info(f"Saved pocket metrics plot to {save_path}")
     
+    return fig
+
+
+def evaluate_dbscan_success_metrics(
+    protein_cache: Dict[str, Dict[str, object]],
+    threshold: float,
+    eps: float,
+    min_samples: int,
+    dcc_threshold: float,
+    dca_threshold: float,
+    topk: Tuple[int, ...] = (1, 2, 3),
+) -> Dict[str, Any]:
+    """
+    Cluster residue-level predictions with DBSCAN and evaluate DCC/DCA success.
+
+    Args:
+        protein_cache: Mapping protein_id -> cached arrays (coords, probs, gt_pockets, ...)
+        threshold: Probability cutoff for selecting residues prior to clustering.
+        eps: DBSCAN epsilon (Å).
+        min_samples: Minimum samples for DBSCAN clusters.
+        dcc_threshold: Success distance (Å) for distance-to-centre (DCC).
+        dca_threshold: Success distance (Å) for distance-of-closest-approach (DCA).
+        topk: Tuple of K values for top-K success evaluation.
+
+    Returns:
+        Dict containing per-protein outcomes and dataset aggregates.
+    """
+    topk = tuple(sorted(set(topk)))
+    per_protein: Dict[str, Dict[str, Any]] = {}
+    total_gt = 0
+    total_clusters = 0
+    dcc_hits = {k: 0 for k in topk}
+    dca_hits = {k: 0 for k in topk}
+    dcc_distances: List[float] = []
+    dca_distances: List[float] = []
+
+    for protein_id, pdata in protein_cache.items():
+        coords = np.asarray(pdata.get("coords", np.empty((0, 3))), dtype=np.float32)
+        probs = np.asarray(pdata.get("probs", np.empty((0,))), dtype=np.float32)
+        gt_pockets = pdata.get("gt_pockets", [])
+
+        if coords.ndim != 2 or coords.shape[1] != 3:
+            logger.warning("Skipping DBSCAN metrics for %s: invalid coords shape %s", protein_id, coords.shape)
+            continue
+
+        mask = probs >= threshold
+        selected_coords = coords[mask]
+        selected_probs = probs[mask]
+
+        clusters: List[Dict[str, Any]] = []
+        if len(selected_coords) >= max(min_samples, 1):
+            db = DBSCAN(eps=eps, min_samples=min_samples)
+            labels = db.fit_predict(selected_coords)
+            for label in np.unique(labels):
+                if label < 0:
+                    continue
+                cluster_idx = np.where(labels == label)[0]
+                cluster_points = selected_coords[cluster_idx]
+                cluster_probs = selected_probs[cluster_idx]
+                clusters.append(
+                    {
+                        "size": int(cluster_points.shape[0]),
+                        "center": cluster_points.mean(axis=0),
+                        "coords": cluster_points,
+                        "score": float(cluster_probs.sum()),
+                        "mean_prob": float(cluster_probs.mean()),
+                        "max_prob": float(cluster_probs.max()),
+                    }
+                )
+
+        clusters.sort(key=lambda c: c["score"], reverse=True)
+        total_clusters += len(clusters)
+
+        gt_centers = []
+        gt_members = []
+        if gt_pockets:
+            for pocket in gt_pockets:  # pockets are P2RankPocket objects
+                center = np.asarray(getattr(pocket, "center", None))
+                members = getattr(pocket, "member_indices", None)
+                if center is None or center.shape != (3,):
+                    continue
+                gt_centers.append(center.astype(np.float32, copy=False))
+                if members is not None and len(members) > 0:
+                    gt_members.append(coords[np.asarray(members, dtype=np.int64)])
+                else:
+                    gt_members.append(np.empty((0, 3), dtype=np.float32))
+
+        gt_centers_arr = np.asarray(gt_centers, dtype=np.float32)
+        gt_count = len(gt_centers_arr)
+        total_gt += gt_count
+
+        dcc_min = np.array([], dtype=np.float32)
+        per_gt_dca: List[float] = []
+
+        if len(clusters) > 0 and gt_count > 0:
+            pred_centers_arr = np.asarray([c["center"] for c in clusters], dtype=np.float32)
+            # DCC distances (best cluster among all predictions)
+            dcc_matrix = np.linalg.norm(
+                pred_centers_arr[:, None, :] - gt_centers_arr[None, :, :],
+                axis=2,
+            )
+            dcc_min = dcc_matrix.min(axis=0)
+            dcc_distances.extend(dcc_min.tolist())
+
+            # DCA distances
+            for gt_pts in gt_members:
+                if gt_pts.size == 0:
+                    per_gt_dca.append(float("inf"))
+                    continue
+                best = float("inf")
+                for cluster in clusters:
+                    pred_pts = cluster["coords"]
+                    if pred_pts.size == 0:
+                        continue
+                    dists = np.linalg.norm(pred_pts[:, None, :] - gt_pts[None, :, :], axis=2)
+                    best = min(best, float(dists.min()))
+                    if best <= dca_threshold:
+                        break
+                per_gt_dca.append(best)
+            dca_distances.extend(per_gt_dca)
+
+            # Success rates per top-k
+            for k in topk:
+                top_pred_centers = pred_centers_arr[:k] if k <= len(pred_centers_arr) else pred_centers_arr
+                if top_pred_centers.size == 0:
+                    continue
+                top_dcc = np.linalg.norm(
+                    top_pred_centers[:, None, :] - gt_centers_arr[None, :, :],
+                    axis=2,
+                )
+                hits = (top_dcc.min(axis=0) <= dcc_threshold).sum()
+                dcc_hits[k] += int(hits)
+
+                # DCA success
+                hit_count = 0
+                for gt_idx, gt_pts in enumerate(gt_members):
+                    if gt_pts.size == 0:
+                        continue
+                    success = False
+                    for cluster in clusters[:k]:
+                        pred_pts = cluster["coords"]
+                        if pred_pts.size == 0:
+                            continue
+                        dists = np.linalg.norm(pred_pts[:, None, :] - gt_pts[None, :, :], axis=2)
+                        if float(dists.min()) <= dca_threshold:
+                            success = True
+                            break
+                    if success:
+                        hit_count += 1
+                dca_hits[k] += hit_count
+
+        per_protein[protein_id] = {
+            "n_selected": int(mask.sum()),
+            "n_clusters": len(clusters),
+            "n_gt_pockets": gt_count,
+            "dcc_distances": dcc_min.tolist() if gt_count > 0 and len(clusters) > 0 else [],
+            "dca_distances": per_gt_dca if gt_count > 0 and len(clusters) > 0 else [],
+        }
+
+    aggregate: Dict[str, Any] = {
+        "config": {
+            "threshold": threshold,
+            "eps": eps,
+            "min_samples": min_samples,
+            "dcc_threshold": dcc_threshold,
+            "dca_threshold": dca_threshold,
+            "topk": topk,
+        },
+        "total_gt_pockets": total_gt,
+        "total_clusters": total_clusters,
+        "dcc_mean_distance": float(np.mean(dcc_distances)) if dcc_distances else None,
+        "dca_mean_distance": float(np.mean(dca_distances)) if dca_distances else None,
+    }
+
+    if total_gt > 0:
+        for k in topk:
+            aggregate[f"dcc_success@{k}"] = dcc_hits[k] / total_gt
+            aggregate[f"dca_success@{k}"] = dca_hits[k] / total_gt
+    else:
+        for k in topk:
+            aggregate[f"dcc_success@{k}"] = 0.0
+            aggregate[f"dca_success@{k}"] = 0.0
+
+    aggregate["dcc_success_counts"] = dcc_hits
+    aggregate["dca_success_counts"] = dca_hits
+    aggregate["dcc_distance_samples"] = dcc_distances
+    aggregate["dca_distance_samples"] = dca_distances
+
+    return {
+        "aggregate": aggregate,
+        "per_protein": per_protein,
+    }
+
+
+def plot_dbscan_success_rates(
+    aggregate: Dict[str, Any],
+    save_path: Path,
+) -> Optional[plt.Figure]:
+    """
+    Plot DCC/DCA top-k success rates from aggregate metrics.
+    """
+    topk = aggregate.get("config", {}).get("topk", (1, 2, 3))
+    if isinstance(topk, list):
+        topk = tuple(topk)
+
+    dcc_rates = [aggregate.get(f"dcc_success@{k}", 0.0) for k in topk]
+    dca_rates = [aggregate.get(f"dca_success@{k}", 0.0) for k in topk]
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(topk, dcc_rates, marker="o", label="DCC success")
+    ax.plot(topk, dca_rates, marker="s", label="DCA success")
+    ax.set_xlabel("Top-K predicted pockets")
+    ax.set_ylabel("Success rate")
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, linestyle="--", alpha=0.4)
+    ax.legend()
+    ax.set_title("DBSCAN-based pocket success rates")
+
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("Saved DBSCAN success plot to %s", save_path)
     return fig
 
 

@@ -10,8 +10,9 @@ points (grey) alongside coloured pocket assignments and pocket centres.
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -182,5 +183,162 @@ def save_pocket_visualization(
     return out_path
 
 
-__all__ = ["save_pocket_visualization"]
+def compose_case_study_grid(
+    tiles: Sequence[Tuple[Path, str]],
+    out_path: Path,
+    *,
+    ncols: Optional[int] = None,
+) -> Optional[Path]:
+    """
+    Compose existing per-protein visualisations into a grid for qualitative studies.
+    """
+    if not HAS_MPL:
+        logger.debug("Matplotlib unavailable; skipping case study composition")
+        return None
+    if not tiles:
+        return None
 
+    n_panels = len(tiles)
+    ncols = ncols or n_panels
+    ncols = max(1, ncols)
+    nrows = math.ceil(n_panels / ncols)
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows))
+    axes_arr = np.atleast_1d(axes).flatten()
+
+    for ax, (img_path, title) in zip(axes_arr, tiles):
+        if not img_path.exists():
+            logger.warning("Case-study tile missing: %s", img_path)
+            ax.axis("off")
+            continue
+        img = plt.imread(str(img_path))
+        ax.imshow(img)
+        ax.set_title(title, fontsize=10)
+        ax.axis("off")
+
+    for ax in axes_arr[n_panels:]:
+        ax.axis("off")
+
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("Saved case study panel grid to %s", out_path)
+    return out_path
+
+
+def save_pymol_script(
+    protein_id: str,
+    coords: np.ndarray,
+    predicted: Sequence[P2RankPocket],
+    ground_truth: Sequence[P2RankPocket],
+    out_dir: Path,
+    *,
+    max_pockets: int = _DEFAULT_MAX_POCKETS,
+    max_background_points: int = _DEFAULT_MAX_POINTS,
+) -> Optional[Path]:
+    """
+    Write a PyMOL script with pseudoatoms for predicted and GT pockets.
+    """
+    if not HAS_MPL:
+        logger.debug("Matplotlib not available; skipping PyMOL script for %s", protein_id)
+        return None
+
+    coords = np.asarray(coords, dtype=np.float32)
+    if coords.ndim != 2 or coords.shape[1] != 3:
+        logger.warning("Invalid coordinate array for %s; PyMOL export skipped", protein_id)
+        return None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    script_path = out_dir / f"{protein_id}_pockets.pml"
+
+    seed = abs(hash((protein_id, "pymol"))) % (2**32)
+    bg_idx = _choose_background_indices(len(coords), max_background_points, seed)
+
+    predicted = list(predicted[:max_pockets])
+    ground_truth = list(ground_truth[:max_pockets])
+
+    predicted_colors = [
+        "marine",
+        "deepteal",
+        "density",
+        "tv_blue",
+        "lightblue",
+        "cyan",
+    ]
+    gt_colors = [
+        "orange",
+        "salmon",
+        "tv_red",
+        "firebrick",
+        "ruby",
+        "pink",
+    ]
+
+    with script_path.open("w") as fh:
+        fh.write("reinitialize\n")
+        fh.write("bg_color white\n")
+        fh.write("set ray_shadows, 0\n")
+        fh.write("set sphere_scale, 0.7\n")
+        fh.write("set transparency, 0.2\n")
+
+        if len(bg_idx) > 0:
+            fh.write("create sas_background, none\n")
+            for idx in bg_idx:
+                x, y, z = coords[idx]
+                fh.write(f"pseudoatom sas_background, pos=[{x:.3f}, {y:.3f}, {z:.3f}], name=BG\n")
+            fh.write("color grey70, sas_background\n")
+            fh.write("show spheres, sas_background\n")
+            fh.write("set sphere_scale, 0.3, sas_background\n")
+
+        for rank, pocket in enumerate(predicted, start=1):
+            members = getattr(pocket, "member_indices", [])
+            if members is None or len(members) == 0:
+                continue
+            obj_name = f"pred_{protein_id}_{rank}"
+            colour = predicted_colors[(rank - 1) % len(predicted_colors)]
+            fh.write(f"create {obj_name}, none\n")
+            for idx in np.asarray(members, dtype=np.int64):
+                if 0 <= idx < len(coords):
+                    x, y, z = coords[idx]
+                    fh.write(f"pseudoatom {obj_name}, pos=[{x:.3f}, {y:.3f}, {z:.3f}], name=P{rank}\n")
+            center = np.asarray(pocket.center, dtype=np.float32)
+            fh.write(f"pseudoatom {obj_name}_center, pos=[{center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}], name=PC{rank}\n")
+            fh.write(f"set sphere_scale, 1.0, {obj_name}_center\n")
+            fh.write(f"show spheres, {obj_name}\n")
+            fh.write(f"show spheres, {obj_name}_center\n")
+            fh.write(f"color {colour}, {obj_name}\n")
+            fh.write(f"color {colour}, {obj_name}_center\n")
+            fh.write(f"set transparency, 0.0, {obj_name}_center\n")
+
+        for rank, pocket in enumerate(ground_truth, start=1):
+            members = getattr(pocket, "member_indices", None)
+            if members is None:
+                member_coords = []
+            else:
+                member_coords = coords[np.asarray(members, dtype=np.int64)]
+            if members is None or len(member_coords) == 0:
+                continue
+            obj_name = f"gt_{protein_id}_{rank}"
+            colour = gt_colors[(rank - 1) % len(gt_colors)]
+            fh.write(f"create {obj_name}, none\n")
+            for x, y, z in member_coords:
+                fh.write(f"pseudoatom {obj_name}, pos=[{x:.3f}, {y:.3f}, {z:.3f}], name=G{rank}\n")
+            center = np.asarray(pocket.center, dtype=np.float32)
+            fh.write(f"pseudoatom {obj_name}_center, pos=[{center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}], name=GC{rank}\n")
+            fh.write(f"set sphere_scale, 1.1, {obj_name}_center\n")
+            fh.write(f"show spheres, {obj_name}\n")
+            fh.write(f"show spheres, {obj_name}_center\n")
+            fh.write(f"color {colour}, {obj_name}\n")
+            fh.write(f"color {colour}, {obj_name}_center\n")
+            fh.write(f"set transparency, 0.0, {obj_name}_center\n")
+
+        fh.write("zoom\n")
+        fh.write("orient\n")
+        fh.write(f"png {protein_id}_pockets.png, dpi=200\n")
+
+    logger.debug("Wrote PyMOL script for %s to %s", protein_id, script_path)
+    return script_path
+
+
+__all__ = ["save_pocket_visualization", "compose_case_study_grid", "save_pymol_script"]

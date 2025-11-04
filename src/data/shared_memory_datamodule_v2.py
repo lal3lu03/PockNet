@@ -1096,8 +1096,11 @@ class TrueSharedMemoryDataModule(LightningDataModule):
             self.val_indices = np.where(split_vector == 1)[0].astype(np.int64)
             self.test_indices = np.where(split_vector == 2)[0].astype(np.int64)
             
-            log.info(f"H5 splits — Train: {len(self.train_indices)}, "
-                    f"Val: {len(self.val_indices)}, Test: {len(self.test_indices)}")
+            log.info(
+                f"H5 splits — Train: {len(self.train_indices)}, "
+                f"Val: {len(self.val_indices)}, Test: {len(self.test_indices)}"
+            )
+            self._apply_train_indices_override()
             self._apply_hard_positive_replay()
             return
         

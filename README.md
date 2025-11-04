@@ -114,6 +114,14 @@ packages.
    `data/vectorsTrain_all_chainfix.csv` (overwriting after creating a timestamped
    backup).
 
+> **Reference**  
+> The physicochemical descriptor set and SAS labelling scheme mirror those
+> introduced by **P2Rank** (Krivák & Hoksza, 2018). Please cite their work if
+> you reuse the feature pipeline:  
+> `Krivák, R., & Hoksza, D. (2018). P2Rank: machine learning based tool for rapid`
+> `and accurate prediction of ligand binding sites from protein structure.`
+> `Journal of Cheminformatics, 10(1), 39.`
+
 ---
 
 ## H5 Generation
@@ -183,6 +191,29 @@ python src/eval.py \
 
 CSV logs for evaluation runs are emitted under `logs/<task>/runs/...` alongside
 Hydra configuration snapshots.
+
+### Current Benchmark Numbers
+
+All metrics are reported on the BU48 test split (48 apo structures) using the
+recreated solvent-accessible surface pipeline:
+
+| Stage | Model Variant | IoU | PR–AUC | Notes |
+| --- | --- | --- | --- | --- |
+| I | TabNet (tabular descriptors) | **0.1498** | 0.231 | Reimplementation of the hand-crafted P2Rank descriptor baseline |
+| II | TabNet + centred ESM2 | 0.1710 | 0.262 | Adds residue language-model context (ESM2-t36-3B) |
+| III | Transformer + kNN (epoch 14) | 0.2780 | **0.424** | Best single checkpoint before SWA |
+| III | Transformer + kNN + SWA | **0.2950** | 0.414 | Stochastic weight averaging (epochs 20–30) |
+
+Pocket-level clustering (DBSCAN, `eps=3.0`, `min_samples=5`, score threshold
+`0.91`) yields the following success rates (single-best prediction = Top‑1):
+
+- DCC success@1: 39 %
+- DCA success@1: 75 %
+- DCC success@3: 50 %
+- DCA success@3: 89 %
+
+Full per-protein summaries and qualitative case studies are stored under
+`outputs/p2rank_like_run_test/`.
 
 ---
 

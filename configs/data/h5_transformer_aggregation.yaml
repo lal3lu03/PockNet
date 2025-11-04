@@ -38,3 +38,7 @@ transform: null
 # Hard-positive replay (optional)
 hard_positive_indices_path: null
 hard_positive_repeat: 1
+
+# Curated fine-tuning support
+train_indices_override_path: null
+train_override_shuffle_seed: null
