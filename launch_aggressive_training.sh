@@ -41,7 +41,7 @@ sleep 2
 # Activate environment
 echo "Activating conda environment..."
 source ~/.bashrc
-conda activate p2rank_env
+conda activate pocknet_env
 
 # Resolve project root (directory containing this script)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
