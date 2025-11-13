@@ -29,9 +29,9 @@ def parse_filename(filename: str):
     """Parse embedding filename to extract components.
     
     Examples:
-        1krn_A.pt → ('1krn', 'A') [CORRECT]
-        3iyt_a_A.pt → ('3iyt', 'a', 'A') [OLD FORMAT - needs fix]
-        a.001.001.001_1s69a_A.pt → complex SCOP format
+        1krn_A.pt -> ('1krn', 'A') [CORRECT]
+        3iyt_a_A.pt -> ('3iyt', 'a', 'A') [OLD FORMAT - needs fix]
+        a.001.001.001_1s69a_A.pt -> complex SCOP format
     """
     stem = Path(filename).stem  # Remove .pt
     parts = stem.split('_')
@@ -76,7 +76,7 @@ def fix_embedding_filenames(emb_dir: Path, dry_run: bool = False):
     logger.info("")
     
     if not emb_dir.exists():
-        logger.error(f"❌ Directory not found: {emb_dir}")
+        logger.error(f"Directory not found: {emb_dir}")
         return 1
     
     # Scan all .pt files
@@ -98,7 +98,7 @@ def fix_embedding_filenames(emb_dir: Path, dry_run: bool = False):
             
             # Check if target already exists
             if new_path.exists():
-                logger.warning(f"⚠️  Target exists: {new_name}")
+                logger.warning(f"Target exists: {new_name}")
                 logger.warning(f"   Source: {pt_file.name}")
                 logger.warning(f"   Will skip this file")
             else:
@@ -111,21 +111,21 @@ def fix_embedding_filenames(emb_dir: Path, dry_run: bool = False):
     
     # Report findings
     logger.info("")
-    logger.info("📊 ANALYSIS:")
+    logger.info("ANALYSIS:")
     logger.info(f"  Files needing rename: {len(to_rename)}")
     logger.info(f"  Already correct format: {len(already_correct)}")
     logger.info(f"  SCOP format (may need check): {len(scop_format)}")
     
     if len(to_rename) == 0:
         logger.info("")
-        logger.info("✅ No files need renaming - all files already in correct format!")
+        logger.info("No files need renaming - all files already in correct format!")
         return 0
     
     # Show sample renamings
     logger.info("")
-    logger.info("📝 SAMPLE RENAMES (first 10):")
+    logger.info("SAMPLE RENAMES (first 10):")
     for old_path, new_path, protein_base, old_chain, chain_upper in to_rename[:10]:
-        logger.info(f"  {old_path.name:<30} → {new_path.name}")
+        logger.info(f"  {old_path.name:<30} -> {new_path.name}")
     
     if len(to_rename) > 10:
         logger.info(f"  ... and {len(to_rename) - 10} more")
@@ -137,22 +137,22 @@ def fix_embedding_filenames(emb_dir: Path, dry_run: bool = False):
         backup_dir = emb_dir / f"backup_{timestamp}"
         
         logger.info("")
-        logger.info(f"💾 Creating backup mapping: {mapping_file.name}")
+        logger.info(f"Creating backup mapping: {mapping_file.name}")
         
         with open(mapping_file, 'w') as f:
             f.write("# ESM Embedding Filename Rename Mapping\n")
             f.write(f"# Created: {datetime.now()}\n")
-            f.write(f"# Format: OLD_NAME → NEW_NAME\n")
+            f.write(f"# Format: OLD_NAME -> NEW_NAME\n")
             f.write("#\n")
             
             for old_path, new_path, protein_base, old_chain, chain_upper in to_rename:
-                f.write(f"{old_path.name} → {new_path.name}\n")
+                f.write(f"{old_path.name} -> {new_path.name}\n")
         
         logger.info(f"   Saved {len(to_rename)} mappings")
         
         # Create backup copies before renaming
         logger.info("")
-        logger.info(f"💾 Creating backup copies in: {backup_dir.name}/")
+        logger.info(f"Creating backup copies in: {backup_dir.name}/")
         backup_dir.mkdir(exist_ok=True)
         
         for old_path, new_path, protein_base, old_chain, chain_upper in to_rename:
@@ -167,11 +167,11 @@ def fix_embedding_filenames(emb_dir: Path, dry_run: bool = False):
     
     if dry_run:
         logger.info("")
-        logger.info("🔍 DRY RUN - No files will be modified")
+        logger.info("DRY RUN - No files will be modified")
         logger.info("   Remove --dry-run flag to apply changes")
     else:
         logger.info("")
-        logger.info("🔄 RENAMING FILES...")
+        logger.info("RENAMING FILES...")
         
         for old_path, new_path, protein_base, old_chain, chain_upper in to_rename:
             try:
@@ -182,20 +182,20 @@ def fix_embedding_filenames(emb_dir: Path, dry_run: bool = False):
                     logger.info(f"   Renamed {success_count}/{len(to_rename)} files...")
                 
             except Exception as e:
-                logger.error(f"❌ Failed to rename {old_path.name}: {e}")
+                logger.error(f"Failed to rename {old_path.name}: {e}")
                 error_count += 1
         
         logger.info("")
-        logger.info("📊 RESULTS:")
+        logger.info("RESULTS:")
         logger.info(f"  Successfully renamed: {success_count}")
         logger.info(f"  Errors: {error_count}")
         
         if error_count == 0:
             logger.info("")
-            logger.info("✅ ALL FILES RENAMED SUCCESSFULLY!")
+            logger.info("ALL FILES RENAMED SUCCESSFULLY!")
         else:
             logger.warning("")
-            logger.warning(f"⚠️  {error_count} files had errors - check logs above")
+            logger.warning(f"{error_count} files had errors - check logs above")
     
     logger.info("")
     logger.info("="*80)

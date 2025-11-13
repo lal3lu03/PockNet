@@ -22,7 +22,7 @@ Usage:
 Example:
     python extract_protein_features.py ../p2rank-datasets/chen11.ds ./output
 
-Use p2rank_env from conda to run this script:
+Use pocknet_env from conda to run this script:
 """
 
 import os
@@ -466,8 +466,8 @@ class Atom:
         return np.linalg.norm(self.get_coord() - other_coords)
 
 
-def p2rank_chem_vector(atom):
-    """Compute chemical feature vector for an atom using P2Rank logic."""
+def surface_chem_vector(atom):
+    """Compute chemical feature vector for an atom using the P2Rank heuristics."""
     res = atom.residue_name
     base = AA_DEFAULTS.get(res, {h:0.0 for h in CHEM_HEADER})
     vec = base.copy()
@@ -1007,7 +1007,7 @@ class Protein:
         atom_vectors = {}
         for atom in self.atoms:
             vec = {}
-            chem_vec = p2rank_chem_vector(atom)
+            chem_vec = surface_chem_vector(atom)
             for h in CHEM_HEADER:
                 vec[f'chem.{h}'] = chem_vec.get(h, 0.0)
 

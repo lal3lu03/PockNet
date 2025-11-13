@@ -64,11 +64,25 @@ dmypy.json
 .pyre/
 
 # -----------------------------------------------------------------------------
+# LaTeX build artefacts
+# -----------------------------------------------------------------------------
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz
+*.toc
+
+# -----------------------------------------------------------------------------
 # Documentation and site builds
 # -----------------------------------------------------------------------------
 docs/_build/
 /site/
 tmp/
+notebooks/
+tex/
 
 # -----------------------------------------------------------------------------
 # IDE / Editor settings
@@ -122,19 +136,16 @@ wandb/
 # Generated data and experiment outputs
 # -----------------------------------------------------------------------------
 /data/*
-!/data/README.md
+!/data/.gitkeep
+!/data/all_train.ds
+!/data/bu48.ds
+!/data/bu48_proteins.txt
 /logs/*
-!/logs/README.md
+!/logs/.gitkeep
 /runs/
-wandb/
-deprecated/
-tex/
 outputs/
+deprecated/
 
 # Shell history (created in repo root during remote sessions)
 bash_history
 bash_history.pretty.txt
-
-todos.txt
-CLEANUP_SUMMARY.md
-

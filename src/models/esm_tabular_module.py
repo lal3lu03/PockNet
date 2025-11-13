@@ -234,13 +234,13 @@ class EsmTabularModule(LightningModule):
         loss_type: str = "bce",
         initial_pos_prior: float = 0.0253,
         modality_dropout_p: float = 0.0,  # Optional modality dropout for robustness
-        # ⭐ NEW: Aggregation mode selection
+        # NEW: Aggregation mode selection
         aggregation_mode: Literal["mean", "transformer"] = "mean",
         # k-NN ESM aggregation parameters (for mean mode)
         k_res_neighbors: int = 1,          # Number of nearest residues to aggregate
         neighbor_weighting: str = "softmax",  # "softmax", "inverse", "uniform"
         neighbor_temp: float = 2.0,        # Temperature for softmax weighting (Å)
-        # ⭐ NEW: Transformer aggregation parameters
+        # NEW: Transformer aggregation parameters
         neighbor_attention_heads: int = 8,
         neighbor_attention_layers: int = 2,
         neighbor_attention_dim_ff: int = 1024,
@@ -278,7 +278,7 @@ class EsmTabularModule(LightningModule):
         super().__init__()
         self.save_hyperparameters()
         
-        # ⭐ NEW: Instantiate NeighborAttentionEncoder if transformer mode
+        # NEW: Instantiate NeighborAttentionEncoder if transformer mode
         if aggregation_mode == "transformer":
             if NeighborAttentionEncoder is None:
                 raise RuntimeError(
@@ -309,9 +309,9 @@ class EsmTabularModule(LightningModule):
             # Initialise final gate layer to zero → sigmoid ≈ 0.5
             nn.init.zeros_(self.gate_mlp[-1].weight)
             nn.init.zeros_(self.gate_mlp[-1].bias)
-            log.info(f"✅ Initialized NeighborAttentionEncoder: {neighbor_attention_heads} heads, "
+            log.info(f"Initialized NeighborAttentionEncoder: {neighbor_attention_heads} heads, "
                      f"{neighbor_attention_layers} layers, distance_bias={distance_bias_type}")
-            log.info("✅ Initialized sample-wise gating network for neighbour aggregation")
+            log.info("Initialized sample-wise gating network for neighbour aggregation")
         else:
             self.neighbor_encoder = None
             self.center_norm = None
@@ -532,7 +532,7 @@ class EsmTabularModule(LightningModule):
         mode = batch.get('aggregation_mode', self.hparams.aggregation_mode)
         
         if mode == 'transformer':
-            # ⭐ NEW: Transformer-based aggregation
+            # NEW: Transformer-based aggregation
             if 'esm_neighbors' not in batch:
                 log.warning("Transformer mode requested but 'esm_neighbors' not in batch. "
                            "Falling back to pre-aggregated embedding.")
@@ -570,7 +570,7 @@ class EsmTabularModule(LightningModule):
                 neighbor_context = encoder_output
                 attn_stats = None
             
-            # ⭐ CRITICAL: Learned per-sample gate between centre & neighbour context
+            # NEW: Learned per-sample gate between centre & neighbour context
             centre_dropped = self.center_dropout(center)
             centre_normed = self.center_norm(centre_dropped)
             neighbor_normed = self.neighbor_norm(neighbor_context)
@@ -1157,7 +1157,7 @@ class EsmTabularModule(LightningModule):
                     else:
                         est = int(self.trainer.max_epochs) * 1000  # safe fallback
                 total_steps = int(est)
-                self.print(f"✅ OneCycleLR total_steps set to {total_steps}")
+                self.print(f"OneCycleLR total_steps set to {total_steps}")
 
             sched = torch.optim.lr_scheduler.OneCycleLR(
                 opt,

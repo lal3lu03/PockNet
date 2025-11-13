@@ -1,0 +1,39 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.o
+*.a
+*.class
+
+# Large local artefacts
+data/**
+!data/.gitkeep
+logs/**
+!logs/.gitkeep
+outputs/
+wandb/
+tmp/
+deprecated/
+notebooks/
+*.h5
+*.ckpt
+*.pt
+*.pkl
+
+# Environment / editor files
+.env
+.venv
+env/
+venv/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Tests and local scripts not needed in runtime image
+tests/
+scripts/

@@ -16,7 +16,7 @@ fusion_method: "concat"  # Options: concat, attention, gated, film, late_logit
 fusion_dim: 512
 modality_dropout_p: 0.0
 
-# ⭐ Aggregation mode selection
+# Aggregation mode selection
 aggregation_mode: "transformer"  # "mean" | "transformer"
 
 # k-NN parameters (for mean mode compatibility)
@@ -24,7 +24,7 @@ k_res_neighbors: 3
 neighbor_weighting: "softmax"
 neighbor_temp: 2.0
 
-# ⭐ Transformer aggregation parameters
+# Transformer aggregation parameters
 neighbor_attention_heads: 6        # Number of attention heads (projected to 2400 => head dim 400)
 neighbor_attention_layers: 2       # Number of transformer layers
 neighbor_attention_dim_ff: 1024    # Feed-forward hidden dimension

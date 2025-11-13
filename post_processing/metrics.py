@@ -668,7 +668,7 @@ def evaluate_dbscan_success_metrics(
         gt_centers = []
         gt_members = []
         if gt_pockets:
-            for pocket in gt_pockets:  # pockets are P2RankPocket objects
+            for pocket in gt_pockets:  # pockets are PocketAggregation objects
                 center = np.asarray(getattr(pocket, "center", None))
                 members = getattr(pocket, "member_indices", None)
                 if center is None or center.shape != (3,):

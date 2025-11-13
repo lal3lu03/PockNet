@@ -23,6 +23,8 @@ Legacy experiments, notebooks, and random-forest/tabnet variants live under
   configures on-the-fly k-NN aggregation; transformer mode is the default.
 - **Hydra + Lightning** – experiments are reproducible and parameterised via
   `configs/`, with launch scripts that set up the environment automatically.
+- **Reproducible release** – `Dockerfile`, `REPRODUCIBILITY.md`, and `docs/src_variable_renames.csv`
+  pin the CUDA/PyTorch image, dataset digests, and source renames for auditing.
 
 ---
 
@@ -62,22 +64,68 @@ packages.
 
 ---
 
+## Docker Image (Reproducible Release)
+
+The repository ships a pinned Docker build that captures the CUDA 12.4.1 +
+CUDNN 9 runtime, PyTorch 2.6 wheels, and all Python dependencies declared in
+`requirements.txt`. Build the image directly from the repository root:
+
+```bash
+docker build -t pocknet:cuda12.4 .
+```
+
+Run training or evaluation from a clean machine by mounting your datasets,
+checkpoints, and logs into the container and propagating the corresponding
+environment variables:
+
+```bash
+docker run --rm --gpus all \
+  -v /abs/path/to/data:/workspace/data \
+  -v /abs/path/to/checkpoints:/workspace/checkpoints \
+  -v /abs/path/to/logs:/workspace/logs \
+  -e POCKNET_DATA_ROOT=/workspace/data \
+  -e POCKNET_CHECKPOINT_ROOT=/workspace/checkpoints \
+  -e POCKNET_LOG_ROOT=/workspace/logs \
+  pocknet:cuda12.4 \
+  python src/train.py experiment=fusion_transformer_aggressive trainer.devices=2
+```
+
+The entrypoint defaults to Bash, so you can replace the final command with any
+tooling (e.g., `python src/eval.py ...` or `python -m post_processing.run_production_pipeline ...`).
+The `REPRODUCIBILITY.md` ledger records the exact commit hash, dataset digests,
+and seed files tied to the image to simplify long-term archiving.
+
+You can also rely on the helper targets defined in the `Makefile`:
+
+```bash
+make docker-build                     # builds pocknet:cuda12.4
+make docker-run ARGS="--help"         # shows the CLI help inside the container
+make docker-run ARGS="train-model -o trainer.fast_dev_run=true"
+make docker-full-run                  # fast-dev full-run using the pinned CLI
+```
+
+---
+
 ## Repository Layout
 
 ```
 ├── README.md                     ← the document you’re reading
 ├── environment.yaml              ← conda environment (pocknet_env)
 ├── pyproject.toml / setup.py     ← packaging metadata
+├── Dockerfile                  ← CUDA 12.4.1 image with pinned PyTorch deps
 ├── launch_aggressive_training.sh ← main Lightning launcher
 ├── launch_aggressive_swa.sh      ← SWA follow-up launcher
 ├── run_h5_generation_optimized.sh← optimized H5 builder entrypoint
 ├── configs/                      ← Hydra config tree (data/experiment/callbacks…)
 ├── src/                          ← datagen, datamodules, models, tools, train/eval
-├── tests/                        ← current regression test for enhanced pipeline
+├── src/tests/                    ← current regression test for enhanced pipeline
 ├── post_processing/              ← legacy pipeline (under active refresh)
 ├── splits/                       ← curated protein ID lists (e.g., BU48)
 ├── CLEANUP_SUMMARY.md            ← change log for the cleanup pass
-└── MODEL_CHANGELOG_OCT2025.md    ← high-level model change notes
+├── MODEL_CHANGELOG_OCT2025.md    ← high-level model change notes
+├── REPRODUCIBILITY.md            ← frozen commit/dataset/seed ledger
+├── docs/src_variable_renames.csv ← audit of renamed P2Rank-era symbols
+└── seeds/master_seeds.yaml       ← canonical RNG seeds used by Hydra configs
 
 (ignored locally but expected when running the pipeline)
 ├── data/                         ← generated features, embeddings, H5 files
@@ -192,6 +240,27 @@ python src/eval.py \
 CSV logs for evaluation runs are emitted under `logs/<task>/runs/...` alongside
 Hydra configuration snapshots.
 
+## End-to-End CLI
+
+`src/scripts/end_to_end_pipeline.py` exposes a Click-powered CLI that mirrors the
+standalone train/eval/post-processing entry points so you can orchestrate
+complete workflows with a single command.
+
+| Command | Purpose | Example |
+| --- | --- | --- |
+| `train-model` | Launch Hydra/Lightning training and store a JSON summary. | `python src/scripts/end_to_end_pipeline.py train-model --summary outputs/train_summary.json -o trainer.fast_dev_run=true` |
+| `predict-dataset` | Run checkpoint + pocket aggregation over an H5 dataset. | `python src/scripts/end_to_end_pipeline.py predict-dataset --checkpoint ckpts/best.ckpt --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_eval_cli --max-proteins 2` |
+| `predict-pdb` | Produce pockets for a single protein or local PDB file. | `python src/scripts/end_to_end_pipeline.py predict-pdb 1a4j_H --checkpoint ckpts/best.ckpt --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_single` |
+| `full-run` | (Optionally) train and immediately execute production inference. | `python src/scripts/end_to_end_pipeline.py full-run --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/release_candidate -o trainer.fast_dev_run=true` |
+
+> Tip  
+> Add overrides such as `-o trainer.fast_dev_run=true` or
+> `-o data.limit_train_batches=0.02` for quick smoke tests in CI/Docker.
+
+These commands mirror the methodology released with the thesis (see
+`tex/master_thesis/03-methodology.tex` for the workflow narrative and
+`tex/master_thesis/91-appendix.tex` for the reproducibility ledger details).
+
 ### Current Benchmark Numbers
 
 All metrics are reported on the BU48 test split (48 apo structures) using the
@@ -213,16 +282,20 @@ Pocket-level clustering (DBSCAN, `eps=3.0`, `min_samples=5`, score threshold
 - DCA success@3: 89 %
 
 Full per-protein summaries and qualitative case studies are stored under
-`outputs/p2rank_like_run_test/`.
+`outputs/pocknet_eval_run_test/`.
 
 ---
 
 ## Post-processing
 
 The enhanced post-processing and production pipelines are currently being
-refreshed.  The existing implementation remains under `post_processing/` and is
-covered by `tests/test_enhanced_pipeline_config.py`, but it is not part of the
-active training workflow yet.
+refreshed. The P2Rank-inspired aggregator now resides in
+`post_processing/pocketnet_aggregation.py` (see `docs/REFERENCES_P2RANK.md` for
+full provenance) and feeds the CLI runner
+`post_processing.run_production_pipeline` whose default outputs land in
+`post_processing_results/pocknet_production`. The legacy suite remains under
+`post_processing/` and is covered by `src/tests/test_enhanced_pipeline_config.py`,
+but it is not part of the active training workflow yet.
 
 ---
 
@@ -239,6 +312,23 @@ active training workflow yet.
   tmpfs path before launching training.
 - **W&B offline:** set `WANDB_MODE=offline` or edit `configs/logger/wandb.yaml`
   if you prefer not to push metrics.
+
+---
+
+## Reproducibility Ledger
+
+- `REPRODUCIBILITY.md` captures the frozen commit (`7972cbe8066d`), dataset
+  SHA-256 digests, the Docker/Makefile workflow, and the CLI invocations mirrored
+  by Appendix~\ref{app:release-ledger}.
+- `seeds/master_seeds.yaml` stores the canonical RNG seeds used across Hydra
+  configs (global/train/finetune) so split regeneration stays deterministic.
+- `docs/src_variable_renames.csv` enumerates every P2Rank-era symbol that was
+  renamed inside `src/` and `post_processing/` (e.g., `P2RankParams →
+  PocketAggregationParams`) so the thesis narrative and the cleaned codebase
+  reference the same concepts.
+- `docs/REFERENCES_P2RANK.md` carries the textual provenance statement cited in
+  `tex/master_thesis/03-methodology.tex` and Appendix~\ref{app:release-ledger},
+  ensuring the post-processing stage keeps the original credit trail intact.
 
 ---
 

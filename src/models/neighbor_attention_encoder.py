@@ -537,4 +537,4 @@ if __name__ == "__main__":
     assert not torch.isnan(aggregated).any(), "Output contains NaN values"
     assert not torch.isinf(aggregated).any(), "Output contains Inf values"
     
-    print("✅ NeighborAttentionEncoder test passed!")
+    print("NeighborAttentionEncoder test passed!")

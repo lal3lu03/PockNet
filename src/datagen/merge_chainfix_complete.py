@@ -167,7 +167,7 @@ def process_large_csv_streaming(input_path: Path, output_path: Path, chain_regis
             
             writer.writerow(row)
     
-    logger.info(f"✅ Processed {row_count:,} rows, {protein_count} unique proteins")
+    logger.info(f"Processed {row_count:,} rows, {protein_count} unique proteins")
     return row_count, protein_count
 
 
@@ -190,14 +190,14 @@ def main():
     
     # Check input exists
     if not input_csv.exists():
-        logger.error(f"❌ Input file not found: {input_csv}")
+        logger.error(f"Input file not found: {input_csv}")
         return 1
     
     # Backup existing chainfix if it exists
     if existing_chainfix.exists():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = output_dir / f"vectorsTrain_all_chainfix_backup_{timestamp}.csv"
-        logger.info(f"📦 Backing up existing chainfix to: {backup_path.name}")
+        logger.info(f"Backing up existing chainfix to: {backup_path.name}")
         
         import shutil
         shutil.copy2(existing_chainfix, backup_path)
@@ -208,13 +208,13 @@ def main():
         logger.info(f"   Backup contains {backup_lines:,} rows")
     
     # Process the main file
-    logger.info(f"\n🔄 Processing {input_csv.name}")
+    logger.info(f"\nProcessing {input_csv.name}")
     logger.info(f"   Adding protein_id and residue_id columns to ALL rows...")
     
     temp_output = output_dir / "vectorsTrain_all_chainfix_temp.csv"
     
     # Build chain registry from feature files
-    logger.info(f"\n🔍 Building chain registry from feature files...")
+    logger.info(f"\nBuilding chain registry from feature files...")
     features_dir = data_dir
     chain_registry = build_chain_registry(features_dir)
     
@@ -222,18 +222,18 @@ def main():
         total_rows, total_proteins = process_large_csv_streaming(input_csv, temp_output, chain_registry)
         
         # Move temp to final location
-        logger.info(f"\n💾 Saving base file: {output_csv}")
+        logger.info(f"\nSaving base file: {output_csv}")
         temp_output.replace(output_csv)
         
         # Final stats
         file_size_mb = output_csv.stat().st_size / 1024 / 1024
-        logger.info(f"\n✅ Complete!")
+        logger.info(f"\nComplete!")
         logger.info(f"   Total rows: {total_rows:,}")
         logger.info(f"   Total proteins: {total_proteins}")
         logger.info(f"   File size: {file_size_mb:.1f} MB")
         
         # Verify protein coverage
-        logger.info(f"\n🔍 Verifying protein coverage...")
+        logger.info(f"\nVerifying protein coverage...")
         proteins_in_output = set()
         with open(output_csv, 'r') as f:
             reader = csv.DictReader(f)
@@ -253,16 +253,16 @@ def main():
         
         missing = proteins_in_input - proteins_in_output
         if missing:
-            logger.warning(f"⚠️  Missing {len(missing)} proteins:")
+            logger.warning(f"Missing {len(missing)} proteins:")
             for p in sorted(missing)[:10]:
                 logger.warning(f"    - {p}")
         else:
-            logger.info(f"✅ All input proteins present!")
+            logger.info(f"All input proteins present!")
         
         # Check BU48 coverage specifically
         bu48_file = data_dir / "test_vectorsTrain_all_names_bu48.txt"
         if bu48_file.exists():
-            logger.info(f"\n🎯 Checking BU48 coverage...")
+            logger.info(f"\nChecking BU48 coverage...")
             with open(bu48_file, 'r') as f:
                 bu48_proteins = set(line.strip() for line in f if line.strip())
             
@@ -281,20 +281,20 @@ def main():
             
             missing_bu48 = bu48_proteins - found_bu48
             if missing_bu48:
-                logger.warning(f"   ⚠️  Missing {len(missing_bu48)} BU48 proteins:")
+                logger.warning(f"   Missing {len(missing_bu48)} BU48 proteins:")
                 for p in sorted(missing_bu48)[:10]:
                     logger.warning(f"     - {p}")
             else:
-                logger.info(f"   ✅ All BU48 proteins present!")
+                logger.info(f"   All BU48 proteins present!")
         
         logger.info(f"\n" + "="*80)
-        logger.info(f"✅ MERGE COMPLETE - Ready for H5 generation!")
+        logger.info(f"MERGE COMPLETE - Ready for H5 generation!")
         logger.info(f"="*80)
         
         return 0
         
     except Exception as e:
-        logger.error(f"❌ Error: {e}")
+        logger.error(f"Error: {e}")
         import traceback
         logger.error(traceback.format_exc())
         

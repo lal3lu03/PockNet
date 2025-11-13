@@ -107,7 +107,7 @@ class PostProcessingEvaluator:
     
     def __init__(self):
         self.thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-        logger.info("🔍 Initialized PostProcessingEvaluator")
+        logger.info("Initialized PostProcessingEvaluator")
         
     def load_ground_truth_from_h5(self, h5_path: str, protein_ids: List[str]) -> Dict[str, np.ndarray]:
         """Load ground truth labels from H5 file"""
@@ -134,7 +134,7 @@ class PostProcessingEvaluator:
                 else:
                     logger.warning(f"Protein {protein_id} not found in ground truth")
         
-        logger.info(f"📊 Loaded ground truth for {len(ground_truth)} proteins")
+        logger.info(f"Loaded ground truth for {len(ground_truth)} proteins")
         return ground_truth
     
     def calculate_residue_level_metrics(self, 
@@ -163,7 +163,7 @@ class PostProcessingEvaluator:
         all_predictions = np.array(all_predictions)
         all_labels = np.array(all_labels)
         
-        logger.info(f"📊 Evaluating {len(all_predictions)} residues")
+        logger.info(f"Evaluating {len(all_predictions)} residues")
         logger.info(f"   Positive residues: {all_labels.sum()} ({100*all_labels.mean():.1f}%)")
         logger.info(f"   Prediction range: [{all_predictions.min():.3f}, {all_predictions.max():.3f}]")
         
@@ -337,7 +337,7 @@ class PostProcessingEvaluator:
                                            ground_truth: Dict[str, np.ndarray]) -> Dict[str, Dict[str, float]]:
         """Compare metrics before and after post-processing"""
         
-        logger.info("🔄 Comparing before/after post-processing")
+        logger.info("Comparing before/after post-processing")
         
         # Calculate metrics for raw predictions
         raw_metrics = self.calculate_residue_level_metrics(raw_predictions, ground_truth)
@@ -373,7 +373,7 @@ class PostProcessingEvaluator:
                              pocket_results: Optional[Dict[str, List]] = None) -> EvaluationResults:
         """Comprehensive evaluation of post-processing results"""
         
-        logger.info("🎯 Running comprehensive evaluation")
+        logger.info("Running comprehensive evaluation")
         
         # Residue-level metrics
         residue_metrics = self.calculate_residue_level_metrics(predictions, ground_truth)
@@ -445,20 +445,20 @@ class PostProcessingEvaluator:
         """Print a comprehensive evaluation report"""
         
         print(f"\n{'='*60}")
-        print(f"📊 {title}")
+        print(f"{title}")
         print(f"{'='*60}")
         
-        print(f"\n🎯 Overview:")
+        print(f"\nOverview:")
         print(f"   Proteins evaluated: {results.num_proteins}")
         print(f"   Total residues: {results.num_residues:,}")
         print(f"   Positive residues: {results.num_positive_residues:,} ({100*results.num_positive_residues/results.num_residues:.1f}%)")
         print(f"   Predicted pockets: {results.num_predicted_pockets}")
         
-        print(f"\n📈 Residue-Level Metrics:")
+        print(f"\nResidue-Level Metrics:")
         print(f"   AUPRC: {results.auprc:.4f}")
         print(f"   AUROC: {results.auroc:.4f}")
         
-        print(f"\n🎯 Performance at Key Thresholds:")
+        print(f"\nPerformance at Key Thresholds:")
         for threshold in [0.3, 0.5, 0.7]:
             if threshold in results.precision_at_threshold:
                 prec = results.precision_at_threshold[threshold]
@@ -466,13 +466,13 @@ class PostProcessingEvaluator:
                 f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
                 print(f"   @ {threshold}: Precision={prec:.3f}, Recall={rec:.3f}, F1={f1:.3f}")
         
-        print(f"\n🔄 IoU Metrics:")
+        print(f"\nIoU Metrics:")
         print(f"   Mean IoU: {results.mean_iou:.4f}")
         print(f"   IoU scores: {len(results.iou_scores)} protein evaluations")
         if results.iou_scores:
             print(f"   IoU range: [{min(results.iou_scores):.3f}, {max(results.iou_scores):.3f}]")
         
-        print(f"\n🏗️  Pocket Quality:")
+        print(f"\nPocket Quality:")
         print(f"   Pocket precision: {results.pocket_precision:.3f}")
         print(f"   Pocket recall: {results.pocket_recall:.3f}")
         
@@ -507,10 +507,10 @@ def create_mock_processed_predictions(raw_predictions: Dict[str, np.ndarray],
 
 
 if __name__ == "__main__":
-    print("🔍 Post-Processing Evaluation Module")
+    print("Post-Processing Evaluation Module")
     print("Features:")
-    print("  ✅ IoU calculation")
-    print("  ✅ AUPRC metrics")
-    print("  ✅ Pocket-level analysis")
-    print("  ✅ Before/after comparison")
-    print("  ✅ Comprehensive reporting")
+    print("  - IoU calculation")
+    print("  - AUPRC metrics")
+    print("  - Pocket-level analysis")
+    print("  - Before/after comparison")
+    print("  - Comprehensive reporting")

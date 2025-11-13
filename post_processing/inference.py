@@ -93,11 +93,11 @@ class SharedMemoryManager:
             
             # Prepare shared memory (rank 0 loads data, others wait)
             if rank == 0:
-                logger.info(f"🚀 Preparing shared memory for: {h5_path}")
+                logger.info(f"Preparing shared memory for: {h5_path}")
                 _prepare_memmaps_from_h5(h5_path, rank)
             
             # All ranks attach to shared memory
-            logger.info(f"📎 Attaching to shared memory (rank: {rank})")
+            logger.info(f"Attaching to shared memory (rank: {rank})")
             self._shared_data = _attach_memmaps(rank)
             self._is_prepared = True
             
@@ -105,7 +105,7 @@ class SharedMemoryManager:
             if self._shared_data:
                 esm_shape = self._shared_data["esm"].shape
                 tab_shape = self._shared_data["tabular"].shape
-                logger.info(f"✅ Shared memory ready - ESM: {esm_shape}, Tabular: {tab_shape}")
+                logger.info(f"Shared memory ready - ESM: {esm_shape}, Tabular: {tab_shape}")
             
             return True
             
@@ -151,7 +151,7 @@ class SharedMemoryManager:
                 "protein_keys": [decoded_keys[i] for i in protein_indices]
             }
             
-            logger.info(f"📊 Extracted {len(protein_indices)} samples for {len(protein_list)} proteins")
+            logger.info(f"Extracted {len(protein_indices)} samples for {len(protein_list)} proteins")
             return result
             
         except Exception as e:
@@ -266,7 +266,7 @@ class ModelInference:
             def load_from_checkpoint(cls, path, map_location=None):
                 raise NotImplementedError(
                     "Auto-detection failed. Please provide model_class to ModelInference.\n"
-                    f"Available: EsmTabularModule={'✓' if EsmTabularModule else '✗'}"
+                    f"Available: EsmTabularModule={'yes' if EsmTabularModule else 'no'}"
                 )
         
         return PlaceholderModel
@@ -356,11 +356,11 @@ class ModelInference:
         
         # Try shared memory first if enabled
         if use_shared_memory and _shared_memory_manager.is_available():
-            logger.info("🚀 Using shared memory for H5 prediction")
+            logger.info("Using shared memory for H5 prediction")
             return self._predict_from_shared_memory(protein_ids, batch_size)
         
         # Fallback to regular H5 loading
-        logger.info("📂 Using regular H5 loading for prediction")
+        logger.info("Using regular H5 loading for prediction")
         return self._predict_from_h5_regular(h5_file, protein_ids, batch_size)
     
     def _predict_from_shared_memory(self, 
@@ -903,7 +903,7 @@ class MultiSeedInference:
         if not self.use_shared_memory:
             return False
             
-        logger.info("🚀 Preparing shared memory for ensemble inference")
+        logger.info("Preparing shared memory for ensemble inference")
         return _shared_memory_manager.prepare_shared_memory(h5_file, rank=0)
     
     def _load_models(self):
@@ -948,9 +948,9 @@ class MultiSeedInference:
         if prepare_shared_memory and self.use_shared_memory:
             success = self.prepare_shared_memory(h5_file)
             if success:
-                logger.info("✅ Shared memory prepared successfully")
+                logger.info("Shared memory prepared successfully")
             else:
-                logger.warning("⚠️  Shared memory preparation failed, using regular loading")
+                logger.warning("Shared memory preparation failed, using regular loading")
         
         logger.info(f"Generating ensemble predictions from {len(self.model_instances)} seeds")
         

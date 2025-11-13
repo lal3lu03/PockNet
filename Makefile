@@ -1,4 +1,12 @@
 
+DOCKER_IMAGE ?= pocknet:cuda12.4
+DATA_ROOT ?= $(PWD)/data
+CHECKPOINT_ROOT ?= $(PWD)/checkpoints
+LOG_ROOT ?= $(PWD)/logs
+H5_PATH ?= /workspace/data/h5/all_train_transformer_v2_optimized.h5
+CSV_PATH ?= /workspace/data/vectorsTrain_all_chainfix.csv
+DOCKER_MOUNTS = -v $(DATA_ROOT):/workspace/data -v $(CHECKPOINT_ROOT):/workspace/checkpoints -v $(LOG_ROOT):/workspace/logs
+
 help:  ## Show help
 	@grep -E '^[.a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -28,3 +36,14 @@ test-full: ## Run all tests
 
 train: ## Train the model
 	python src/train.py
+
+docker-build: ## Build the CUDA 12.4 Docker image
+	docker build -t $(DOCKER_IMAGE) .
+
+docker-run: ## Run end-to-end CLI inside Docker (set ARGS="train-model ...")
+	mkdir -p $(DATA_ROOT) $(CHECKPOINT_ROOT) $(LOG_ROOT)
+	docker run --rm --gpus all $(DOCKER_MOUNTS) $(DOCKER_IMAGE) $(if $(ARGS),$(ARGS),--help)
+
+docker-full-run: ## Example fast-dev full run executed inside Docker
+	mkdir -p $(DATA_ROOT) $(CHECKPOINT_ROOT) $(LOG_ROOT)
+	docker run --rm --gpus all $(DOCKER_MOUNTS) $(DOCKER_IMAGE) $(if $(FULL_ARGS),$(FULL_ARGS),full-run --h5 $(H5_PATH) --csv $(CSV_PATH) --output /workspace/logs/docker_full_run -o trainer.fast_dev_run=true)

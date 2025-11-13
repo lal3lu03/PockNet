@@ -1,0 +1,8 @@
+module,old_name,new_name,reason
+post_processing/pocketnet_aggregation.py,P2RankParams,PocketAggregationParams,Pluralised config class without upstream branding while keeping attribution in docs
+post_processing/pocketnet_aggregation.py,P2RankPocket,PocketAggregation,Neutral pocket record name referenced throughout the pipeline
+post_processing/pocketnet_aggregation.py,P2RankPostProcessor,PocketAggregationProcessor,Clarifies that the processor is the PockNet-owned implementation of the historical heuristics
+src/datagen/extract_protein_features.py,p2rank_chem_vector,surface_chem_vector,Function renamed to describe its role while acknowledging P2Rank-inspired heuristics in the docstring
+src/data/knn_enhanced_dataset.py,p2rank_base,legacy_dataset_base,Variable now explains that the fallback path points at legacy datasets derived from the original P2Rank export
+src/data/knn_enhanced_dataset.py,DEFAULT_PDB_DIRECTORIES,LEGACY_PDB_SEARCH_PATHS,Clarifies that these directories contain archived P2Rank-era PDB dumps used as a fallback
+src/data/practical_knn_utils.py,DEFAULT_PDB_DIRECTORIES,LEGACY_PDB_SEARCH_PATHS,Shares the same naming convention as the enhanced dataset helper for the legacy PDB search roots

@@ -80,7 +80,7 @@ class ImbalanceSetup(Callback):
             )
             device = pl_module.device if hasattr(pl_module, 'device') else 'cpu'
             pl_module.pos_weight.data = target_weight.to(device)
-            log.info(f"✅ Updated model pos_weight to {pl_module.pos_weight.item():.3f}")
+            log.info(f"Updated model pos_weight to {pl_module.pos_weight.item():.3f}")
             if trainer.logger is not None:
                 try:
                     trainer.logger.log_metrics(
@@ -92,7 +92,7 @@ class ImbalanceSetup(Callback):
         elif hasattr(pl_module, "pos_weight"):
             current = pl_module.pos_weight.detach().cpu().item()
             log.info(
-                f"⚠️ Skipping pos_weight update (override_pos_weight=False). "
+                f"Skipping pos_weight update (override_pos_weight=False). "
                 f"Keeping existing value {current:.3f}"
             )
         else:
@@ -109,7 +109,7 @@ class ImbalanceSetup(Callback):
                 if isinstance(last_layer, torch.nn.Linear) and last_layer.out_features == 1:
                     with torch.no_grad():
                         last_layer.bias.data.fill_(bias_init)
-                    log.info(f"✅ Set classifier bias to {bias_init:.4f}")
+                    log.info(f"Set classifier bias to {bias_init:.4f}")
                         
             elif hasattr(pl_module, "late_head"):
                 # Late fusion - set bias for both heads
@@ -117,9 +117,9 @@ class ImbalanceSetup(Callback):
                     with torch.no_grad():
                         pl_module.late_head.head_tab.bias.data.fill_(bias_init)
                         pl_module.late_head.head_esm.bias.data.fill_(bias_init)
-                    log.info(f"✅ Set late fusion head biases to {bias_init:.4f}")
+                    log.info(f"Set late fusion head biases to {bias_init:.4f}")
         else:
-            log.info("⚠️ Skipping classifier bias update (override_bias=False)")
+            log.info("Skipping classifier bias update (override_bias=False)")
         
         # Log metrics to wandb/logger
         if trainer.logger is not None:
@@ -133,8 +133,8 @@ class ImbalanceSetup(Callback):
             
             try:
                 trainer.logger.log_metrics(metrics, step=trainer.global_step)
-                log.info("✅ Logged imbalance metrics to wandb")
+                log.info("Logged imbalance metrics to wandb")
             except Exception as e:
                 log.warning(f"Failed to log imbalance metrics: {e}")
         
-        log.info("🎯 Imbalance setup complete!")
+        log.info("Imbalance setup complete!")

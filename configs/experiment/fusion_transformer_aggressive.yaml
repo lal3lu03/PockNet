@@ -48,7 +48,7 @@ model:
   fusion_dim: 512
   modality_dropout_p: 0.1  # Force model to use both modalities
   
-  # ⭐ Transformer aggregation mode
+  # Transformer aggregation mode
   aggregation_mode: "transformer"
   
   # Transformer parameters - INCREMENTAL CAPACITY INCREASE

@@ -20,7 +20,7 @@ import os
 log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[2]))
-DEFAULT_PDB_DIRECTORIES = [
+LEGACY_PDB_SEARCH_PATHS = [
     PROJECT_ROOT / "data" / "p2rank-datasets" / "joined" / "bu48",
     PROJECT_ROOT / "data" / "p2rank-datasets" / "joined" / "b210",
     PROJECT_ROOT / "data" / "p2rank-datasets" / "chen11_test_prep",
@@ -65,11 +65,11 @@ def get_protein_residue_coords(protein_id: str, pdb_base_dir: str = None) -> np.
             Path(pdb_base_dir) / f"{protein_id}_A.pdb",
         ])
     
-    # Try p2rank-datasets structure (the main location for training data)
-    p2rank_base = PROJECT_ROOT / "data" / "p2rank-datasets" / "joined"
-    if p2rank_base.exists():
+    # Try legacy p2rank-datasets structure (main location for historical training data)
+    legacy_dataset_base = PROJECT_ROOT / "data" / "p2rank-datasets" / "joined"
+    if legacy_dataset_base.exists():
         for subdir in ["bu48", "b210", "dt198", "astex", "conservation"]:
-            subdir_path = p2rank_base / subdir
+            subdir_path = legacy_dataset_base / subdir
             if subdir_path.exists():
                 possible_paths.extend([
                     subdir_path / f"{base_protein_id}.pdb",
@@ -78,7 +78,7 @@ def get_protein_residue_coords(protein_id: str, pdb_base_dir: str = None) -> np.
                 ])
     
     # Default paths to try
-    for base_path in DEFAULT_PDB_DIRECTORIES:
+    for base_path in LEGACY_PDB_SEARCH_PATHS:
         if not base_path.exists():
             continue
         candidate_dirs = [base_path]

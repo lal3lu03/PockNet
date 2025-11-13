@@ -3,7 +3,7 @@
 
 # Activate conda environment
 source ~/.bashrc
-conda activate p2rank_env
+conda activate pocknet_env
 
 # Get number of CPU cores
 NCORES=$(nproc)

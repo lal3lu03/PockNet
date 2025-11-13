@@ -19,14 +19,14 @@ Options:
   --no-eval            Skip evaluation after blending.
   --log-dir DIR        Directory for evaluation logs (default: logs/blend_evals).
   --output-dir DIR     Directory for blended checkpoints (defaults to finetune checkpoint dir).
-  --conda-env NAME     Conda environment to activate (default: p2rank_env).
+  --conda-env NAME     Conda environment to activate (default: pocknet_env).
   --help               Show this help message and exit.
 EOF
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
-CONDA_ENV_NAME=${CONDA_ENV_NAME:-p2rank_env}
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-pocknet_env}
 
 CKPT_BASE_DEFAULT=logs/fusion_transformer_aggressive_oct17/runs/2025-10-21_12-48-21/checkpoints/epoch_09-val_auprc_0.3132.ckpt
 CKPT_FINETUNE_DEFAULT=logs/fusion_transformer_aggressive_oct17/runs/2025-10-21_20-37-35/checkpoints/finetune_epoch_12-val_auprc_0.2985.ckpt
@@ -226,7 +226,7 @@ for spec in "${RATIO_SPECS[@]}"; do
   echo "Blending ratio: ${spec} (normalized: ${weights[*]})"
   echo "Output checkpoint: ${blend_path}"
 
-  python scripts/blend_checkpoints.py \
+  python src/scripts/blend_checkpoints.py \
     --inputs "$CKPT_BASE" "$CKPT_FINETUNE" \
     --weights "${weights[@]}" \
     --output "$blend_path"

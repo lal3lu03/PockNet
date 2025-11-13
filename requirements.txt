@@ -1,5 +1,5 @@
 # PockNet - Protein Binding Site Prediction Requirements
-# Complete pip requirements based on fully tested p2rank_env
+# Complete pip requirements based on fully tested pocknet_env
 # This file contains all Python packages needed for:
 # - PyTorch Lightning training with Hydra configuration
 # - P2Rank protein feature extraction pipeline  

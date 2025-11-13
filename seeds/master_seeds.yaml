@@ -1,0 +1,5 @@
+# Canonical seeds for the thesis experiments
+# Synchronised with configs/experiment/* and configs/data/*
+global_training_seed: 42
+validation_split_seed: 42
+finetune_shuffle_seed: 2025

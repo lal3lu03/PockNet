@@ -28,7 +28,7 @@ EOF
 }
 
 EXPERIMENT=${EXPERIMENT_OVERRIDE:-fusion_transformer_aggressive}
-CONDA_ENV_NAME=${CONDA_ENV_NAME:-p2rank_env}
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-pocknet_env}
 SESSION_NAME="transformer_training_swa"
 CKPT_PATH=""
 SWA_START=20
@@ -152,7 +152,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$CKPT_PATH" && ! -f "$CKPT_PATH" ]]; then
-  echo "❌ Provided checkpoint path not found: $CKPT_PATH" >&2
+  echo "ERROR: Provided checkpoint path not found: $CKPT_PATH" >&2
   exit 1
 fi
 
@@ -188,22 +188,22 @@ fi
 LOG_PATH="training_aggressive_swa_$(date +%F_%H-%M-%S).log"
 
 echo "=========================================="
-echo "🚀 Aggressive Transformer + SWA Training"
+echo "Aggressive Transformer + SWA Training"
 echo "=========================================="
 echo ""
-echo "📊 Training Plan:"
-echo "   • Experiment: ${EXPERIMENT}"
-echo "   • Checkpoint: ${CKPT_PATH:-<fresh start>}"
-echo "   • SWA start / length: ${SWA_START} / ${SWA_LENGTH}"
-echo "   • Max epochs: ${MAX_EPOCHS}"
-echo "   • SWA LR: ${SWA_LR}"
+echo "Training Plan:"
+echo "   - Experiment: ${EXPERIMENT}"
+echo "   - Checkpoint: ${CKPT_PATH:-<fresh start>}"
+echo "   - SWA start / length: ${SWA_START} / ${SWA_LENGTH}"
+echo "   - Max epochs: ${MAX_EPOCHS}"
+echo "   - SWA LR: ${SWA_LR}"
 echo ""
 
-echo "🧹 Stopping existing session (${SESSION_NAME})..."
+echo "Stopping existing session (${SESSION_NAME})..."
 tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
 sleep 2
 
-echo "🔧 Activating conda environment..."
+echo "Activating conda environment..."
 if command -v conda >/dev/null 2>&1; then
   set +u
   if [[ -f "$HOME/.bashrc" ]]; then
@@ -215,19 +215,19 @@ if command -v conda >/dev/null 2>&1; then
   eval "$(conda shell.bash hook)" >/dev/null 2>&1
   conda activate "$CONDA_ENV_NAME"
 else
-  echo "❌ Conda not found on PATH." >&2
+  echo "ERROR: Conda not found on PATH." >&2
   exit 1
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo ""
-echo "📊 GPU Status:"
+echo "GPU Status:"
 if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null || \
-    echo "⚠️  nvidia-smi available but could not query devices."
+    echo "Warning: nvidia-smi available but could not query devices."
 else
-  echo "⚠️  nvidia-smi not found on PATH."
+  echo "Warning: nvidia-smi not found on PATH."
 fi
 
 GPU_COUNT=$(python - <<'PY' 2>/dev/null || echo "0"
@@ -249,7 +249,7 @@ done
 TRAIN_CMD+=" 2>&1 | tee $(printf '%q' "${LOG_PATH}")"
 
 echo ""
-echo "🚀 Launching training with SWA finetune..."
+echo "Launching training with SWA finetune..."
 echo "   $GPU_MSG"
 echo "   Log file: ${LOG_PATH}"
 echo ""
@@ -259,27 +259,27 @@ USED_TMUX=0
 
 if [[ "$USE_TMUX" == true ]] && command -v tmux >/dev/null 2>&1; then
   if tmux new-session -d -s "$SESSION_NAME" bash -c "$RUN_CMD"; then
-    echo "✅ Training launched in tmux session '$SESSION_NAME'"
+    echo "Training launched in tmux session '$SESSION_NAME'"
     USED_TMUX=1
   else
-    echo "⚠️ tmux launch failed. Running training inline instead."
+    echo "Warning: tmux launch failed. Running training inline instead."
     bash -c "$RUN_CMD"
   fi
 else
   if [[ "$USE_TMUX" == true ]]; then
-    echo "⚠️ tmux not found. Running training inline."
+    echo "Warning: tmux not found. Running training inline."
   fi
   bash -c "$RUN_CMD"
 fi
 
 if [[ "$USED_TMUX" -eq 1 ]]; then
-  echo "📊 Monitor with:"
+  echo "Monitor with:"
   echo "   tmux attach -t $SESSION_NAME"
   echo "   tail -f ${LOG_PATH}"
   echo ""
 else
-  echo "📊 Monitor with: tail -f ${LOG_PATH}"
+  echo "Monitor with: tail -f ${LOG_PATH}"
   echo ""
 fi
-echo "🔍 W&B Dashboard:"
+echo "W&B Dashboard:"
 echo "   https://wandb.ai/max-hageneder-johannes-kepler-universit-t-linz/fusion_pocknet_thesis"

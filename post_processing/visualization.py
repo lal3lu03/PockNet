@@ -27,7 +27,7 @@ try:  # Lazy import – matplotlib is optional for headless environments
 except Exception:  # pragma: no cover - visualization is optional
     HAS_MPL = False
 
-from .p2rank_like import P2RankPocket
+from .pocketnet_aggregation import PocketAggregation
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def _choose_background_indices(n_points: int, max_points: int, seed: int) -> np.
 
 
 def _iter_pocket_points(
-    pockets: Sequence[P2RankPocket],
+    pockets: Sequence[PocketAggregation],
     coords: np.ndarray,
     limit: int,
 ) -> Iterable[tuple[str, np.ndarray, np.ndarray]]:
@@ -82,8 +82,8 @@ def _iter_pocket_points(
 def save_pocket_visualization(
     protein_id: str,
     coords: np.ndarray,
-    predicted: Sequence[P2RankPocket],
-    ground_truth: Sequence[P2RankPocket],
+    predicted: Sequence[PocketAggregation],
+    ground_truth: Sequence[PocketAggregation],
     out_dir: Path,
     *,
     max_points: int = _DEFAULT_MAX_POINTS,
@@ -230,8 +230,8 @@ def compose_case_study_grid(
 def save_pymol_script(
     protein_id: str,
     coords: np.ndarray,
-    predicted: Sequence[P2RankPocket],
-    ground_truth: Sequence[P2RankPocket],
+    predicted: Sequence[PocketAggregation],
+    ground_truth: Sequence[PocketAggregation],
     out_dir: Path,
     *,
     max_pockets: int = _DEFAULT_MAX_POCKETS,

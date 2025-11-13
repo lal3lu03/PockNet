@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Production P2Rank-Style Post-Processing
-======================================
+Production Pocket Aggregation (P2Rank-Inspired)
+===============================================
 
 Runs PockNet inference on an H5 dataset and applies a faithful Python
-implementation of the P2Rank pocket aggregation stage so that the final
-outputs match the original tool's `pockets.csv` format.
+implementation of the historical P2Rank pocket aggregation stage so that the
+final outputs match the original tool's `pockets.csv` format.
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ from post_processing.metrics import (
     evaluate_dbscan_success_metrics,
     plot_dbscan_success_rates,
 )
-from post_processing.p2rank_like import (
-    P2RankParams,
-    P2RankPostProcessor,
+from post_processing.pocketnet_aggregation import (
+    PocketAggregationParams,
+    PocketAggregationProcessor,
     ProteinPointLoader,
     create_ground_truth_pockets,
     pocket_iou_metrics,
@@ -45,10 +45,10 @@ from post_processing.visualization import (
     save_pymol_script,
 )
 
-logger = logging.getLogger("pocknet.p2rank_production")
+logger = logging.getLogger("pocknet.pocket_aggregation")
 
-_DEFAULT_ZSCORE_REL = Path("tmp/p2rank/distro/models/_score_transform/default_ZscoreTpTransformer.json")
-_DEFAULT_PROB_REL = Path("tmp/p2rank/distro/models/_score_transform/default_ProbabilityScoreTransformer.json")
+_DEFAULT_ZSCORE_REL = Path("tmp/pocknet_reference/distro/models/_score_transform/default_ZscoreTpTransformer.json")
+_DEFAULT_PROB_REL = Path("tmp/pocknet_reference/distro/models/_score_transform/default_ProbabilityScoreTransformer.json")
 _DEFAULT_POSTPROC_WORKERS = max(1, min(8, (os.cpu_count() or 4) // 2))
 
 
@@ -308,7 +308,7 @@ def run_production_pipeline(
     csv_path: Path,
     output_root: Path,
     max_proteins: Optional[int] = None,
-    params: Optional[P2RankParams] = None,
+    params: Optional[PocketAggregationParams] = None,
     threshold_grid: Optional[List[float]] = None,
     split_mode: str = "test",
     zscore_transformer: Optional[ScoreTransformer] = None,
@@ -348,7 +348,7 @@ def run_production_pipeline(
     logger.info("CSV source: %s", csv_path)
     logger.info("Output dir: %s", output_root)
 
-    params = params or P2RankParams()
+    params = params or PocketAggregationParams()
 
     loader = ProteinPointLoader(h5_path, csv_path, cache_dir=output_root / "cache")
     all_proteins = _select_proteins_by_split(h5_path, loader, split_mode)
@@ -443,7 +443,7 @@ def run_production_pipeline(
                 "skip": f"Skipping {protein_id} (no coordinates)",
             }
 
-        local_processor = P2RankPostProcessor(
+        local_processor = PocketAggregationProcessor(
             params,
             zscore_transformer=zscore_transformer,
             probability_transformer=probability_transformer,
@@ -665,8 +665,8 @@ def run_production_pipeline(
         sweep_results: List[Dict[str, float]] = []
         for threshold in tqdm(threshold_grid, desc="Threshold sweep", unit="thr"):
             base_param_dict["pred_point_threshold"] = threshold
-            sweep_processor = P2RankPostProcessor(
-                P2RankParams(**base_param_dict),
+            sweep_processor = PocketAggregationProcessor(
+                PocketAggregationParams(**base_param_dict),
                 zscore_transformer=zscore_transformer,
                 probability_transformer=probability_transformer,
             )
@@ -735,11 +735,11 @@ def run_production_pipeline(
 # --------------------------------------------------------------------------- #
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run P2Rank-style production pipeline.")
+    parser = argparse.ArgumentParser(description="Run the PockNet pocket aggregation pipeline (P2Rank-inspired).")
     parser.add_argument("--checkpoint", type=Path, required=True, help="Path to Lightning checkpoint.")
     parser.add_argument("--h5", type=Path, required=True, help="Inference H5 dataset.")
     parser.add_argument("--csv", type=Path, required=True, help="vectorsTrain_all_chainfix CSV file.")
-    parser.add_argument("--output", type=Path, default=Path("post_processing_results/p2rank_production"), help="Output directory.")
+    parser.add_argument("--output", type=Path, default=Path("post_processing_results/pocknet_production"), help="Output directory.")
     parser.add_argument("--max-proteins", type=int, default=None, help="Limit number of proteins to process.")
     parser.add_argument("--log-level", default="INFO", help="Logging level (INFO, DEBUG, ...).")
     parser.add_argument(
@@ -933,7 +933,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         device_request = args.device
         use_shared_memory = not args.disable_shared_memory
         postproc_workers = max(1, args.postproc_workers)
-        base_params = P2RankParams()
+        base_params = PocketAggregationParams()
         if args.pred_threshold is not None:
             base_params.pred_point_threshold = args.pred_threshold
         if args.min_cluster_size is not None:

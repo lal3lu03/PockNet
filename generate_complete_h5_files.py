@@ -602,34 +602,34 @@ def build_h5(csv_path: Path, esm_dir: Path, bu48_txt: Optional[Path], out_path: 
     exact_rate = 100 * exact_hits / (exact_hits + fallback_hits + 1e-9)
     
     logger.info(f"\n{'='*60}")
-    logger.info(f"✅ H5 FILE GENERATION COMPLETED")
+    logger.info("H5 FILE GENERATION COMPLETED")
     logger.info(f"{'='*60}")
     logger.info(f"Output file: {out_path}")
     logger.info(f"File size: {size_gb:.2f} GB")
     logger.info(f"Processing time: {total_time/60:.1f} minutes ({total_time:.1f}s)")
     logger.info(f"")
-    logger.info(f"📊 DATA STATISTICS:")
+    logger.info("DATA STATISTICS:")
     logger.info(f"   Total samples: {total_rows:,}")
     logger.info(f"   Successful proteins: {successful_groups:,}")
     logger.info(f"   ESM dimension: {esm_dim}")
     logger.info(f"   Tabular features: {len(feat_cols)}")
     logger.info(f"")
-    logger.info(f"🎯 RESIDUE MAPPING QUALITY:")
+    logger.info("RESIDUE MAPPING QUALITY:")
     logger.info(f"   Exact residue hits: {exact_hits:,} ({exact_rate:.2f}%)")
     logger.info(f"   Mean pooled fallbacks: {fallback_hits:,} ({100-exact_rate:.2f}%)")
     logger.info(f"")
-    logger.info(f"⚡ PERFORMANCE:")
+    logger.info("PERFORMANCE:")
     logger.info(f"   Processing rate: {total_rows/total_time:.0f} samples/second")
     logger.info(f"   Protein rate: {successful_groups/total_time:.1f} proteins/second")
     logger.info(f"{'='*60}")
     
     # Apply PDB4-based split cleanup to avoid data leakage
-    logger.info(f"\n🧹 APPLYING PDB4-BASED SPLIT CLEANUP...")
+    logger.info("\nAPPLYING PDB4-BASED SPLIT CLEANUP...")
     cleanup_success = _cleanup_pdb4_splits(out_path, val_frac, seed)
     if cleanup_success:
-        logger.info(f"✅ PDB4 cleanup completed - no protein leakage between splits")
+        logger.info("PDB4 cleanup completed - no protein leakage between splits")
     else:
-        logger.warning(f"⚠️  PDB4 cleanup failed - manual verification recommended")
+        logger.warning("PDB4 cleanup failed - manual verification recommended")
     
     return True
 
@@ -724,10 +724,10 @@ def _cleanup_pdb4_splits(h5_path: Path, val_frac: float, seed: int) -> bool:
             overlap = train_pdb4s & val_pdb4s
             
             if overlap:
-                logger.warning(f"   ⚠️  Found {len(overlap)} PDB4 codes in both train and val!")
+                logger.warning(f"   Found {len(overlap)} PDB4 codes in both train and val!")
                 return False
             else:
-                logger.info(f"   ✅ Zero PDB4 overlap between train and val")
+                logger.info("   Zero PDB4 overlap between train and val")
                 return True
                 
     except Exception as e:
@@ -774,10 +774,10 @@ def main():
     )
     
     if success:
-        logger.info("✅ H5 file generation completed successfully!")
+        logger.info("H5 file generation completed successfully!")
         return 0
     else:
-        logger.error("❌ H5 file generation failed!")
+        logger.error("H5 file generation failed!")
         return 1
 
 if __name__ == "__main__":

@@ -104,7 +104,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             log.info(f"[rank: {rank}] Another process is preparing data, waiting...")
             fcntl.flock(lock_f, fcntl.LOCK_EX)  # Wait for lock to be released
             
-            # 🔧 Re-validate the manifest against the *current* H5
+            # Re-validate the manifest against the *current* H5
             if MANIFEST_FILE.exists():
                 try:
                     with open(MANIFEST_FILE, "r") as f:
@@ -130,7 +130,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             except Exception:
                 log.info(f"[rank: {rank}] Manifest unreadable — rebuilding")
         
-        log.info(f"🚀 [rank: {rank}] Preparing shared memory data from {h5_path}")
+        log.info(f"[rank: {rank}] Preparing shared memory data from {h5_path}")
         
         with h5py.File(h5_path, 'r') as h5f:
             # Get dataset dimensions
@@ -141,7 +141,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             log.info(f"[rank: {rank}] Dataset dimensions: {total_samples} samples, "
                     f"tabular={tabular_dim}, esm={esm_dim}")
             
-            # ⭐ NEW: Detect transformer mode from H5 attributes
+            # NEW: Detect transformer mode from H5 attributes
             aggregation_mode = h5f.attrs.get('aggregation_mode', 'mean')
             if isinstance(aggregation_mode, bytes):
                 aggregation_mode = aggregation_mode.decode('utf-8')
@@ -176,7 +176,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                     format_type = "v2 (indices)"
                 else:
                     format_type = "v1 (pre-computed embeddings)"
-                log.info(f"[rank: {rank}] 🔬 Transformer mode detected: k={knn_k} neighbors, format={format_type}")
+                log.info(f"[rank: {rank}] Transformer mode detected: k={knn_k} neighbors, format={format_type}")
             else:
                 knn_k = None
                 log.info(f"[rank: {rank}] Mean aggregation mode")
@@ -215,7 +215,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             residue_emb_mm = residue_key_mm = residue_num_mm = None
             residue_total = 0
 
-            # ⭐ NEW: Create memory-mapped arrays for transformer neighbor tensors
+            # NEW: Create memory-mapped arrays for transformer neighbor tensors
             if has_transformer_data:
                 if 'neighbor_residue_indices' in h5f:
                     # V3 format: neighbour indices reference residue table embeddings
@@ -305,7 +305,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                 if has_split:
                     spl_mm[i:end_idx] = h5f["split"][i:end_idx].astype(np.int8, copy=False)
                 
-                # ⭐ NEW: Copy transformer neighbor tensors (format-aware)
+                    # NEW: Copy transformer neighbor tensors (format-aware)
                 if has_transformer_data:
                     if 'neighbor_residue_indices' in h5f:
                         neighbor_idx_mm[i:end_idx] = h5f['neighbor_residue_indices'][i:end_idx].astype(np.int32, copy=False)
@@ -321,7 +321,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                         neighbor_resnum_mm[i:end_idx] = h5f['neighbor_resnums'][i:end_idx].astype(np.int64, copy=False)
                 
                 if (i // chunk_size) % 10 == 0:
-                    log.info(f"📥 [rank: {rank}] Loaded {end_idx}/{total_samples} samples "
+                    log.info(f"[rank: {rank}] Loaded {end_idx}/{total_samples} samples "
                             f"({100*end_idx/total_samples:.1f}%)")
             
             # Copy residue lookup table for v3 after sample chunks
@@ -356,7 +356,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             if has_split:
                 spl_mm.flush()
             
-            # ⭐ NEW: Flush transformer neighbor memmaps (format-aware)
+            # NEW: Flush transformer neighbor memmaps (format-aware)
             if has_transformer_data:
                 if 'neighbor_residue_indices' in h5f:
                     neighbor_idx_mm.flush()
@@ -381,7 +381,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             if has_split:
                 memory_gb += spl_mm.nbytes / (1024**3)
             
-            # ⭐ NEW: Add transformer neighbor memory usage (format-aware)
+            # NEW: Add transformer neighbor memory usage (format-aware)
             if has_transformer_data:
                 if 'neighbor_residue_indices' in h5f and residue_emb_mm is not None:
                     neighbor_memory_gb = (
@@ -409,7 +409,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                     memory_gb += neighbor_memory_gb
                     log.info(f"[rank: {rank}] Neighbor tensors (v1): {neighbor_memory_gb:.2f} GB")
             
-            log.info(f"✅ [rank: {rank}] Data preparation complete! "
+            log.info(f"[rank: {rank}] Data preparation complete! "
                     f"Shared memory usage: {memory_gb:.2f} GB")
             
             # Create manifest with all necessary metadata
@@ -422,7 +422,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                 "memory_gb": memory_gb,
                 "pid_ds_name": pid_ds,  # Record which dataset name was used
                 "has_split": has_split,  # Record if split was present
-                "aggregation_mode": aggregation_mode,  # ⭐ NEW: Record aggregation mode
+                "aggregation_mode": aggregation_mode,  # NEW: Record aggregation mode
                 "paths": {
                     "tabular": str(tab_path),
                     "esm": str(esm_path),
@@ -446,7 +446,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
                 }
             }
             
-            # ⭐ NEW: Add transformer neighbor tensors to manifest (format-aware)
+            # NEW: Add transformer neighbor tensors to manifest (format-aware)
             if has_transformer_data:
                 manifest["knn_k"] = knn_k
                 
@@ -507,7 +507,7 @@ def _prepare_memmaps_from_h5(h5_path: Path, rank: int):
             with open(MANIFEST_FILE, 'w') as f:
                 json.dump(manifest, f, indent=2)
             
-            log.info(f"📋 [rank: {rank}] Manifest written to {MANIFEST_FILE}")
+            log.info(f"[rank: {rank}] Manifest written to {MANIFEST_FILE}")
 
 def _attach_memmaps(rank: int) -> Dict[str, torch.Tensor]:
     """
@@ -517,7 +517,7 @@ def _attach_memmaps(rank: int) -> Dict[str, torch.Tensor]:
     if not MANIFEST_FILE.exists():
         raise FileNotFoundError(f"Manifest not found: {MANIFEST_FILE}")
     
-    log.info(f"📎 [rank: {rank}] Attaching to shared memory...")
+    log.info(f"[rank: {rank}] Attaching to shared memory...")
     
     with open(MANIFEST_FILE, 'r') as f:
         manifest = json.load(f)
@@ -555,7 +555,7 @@ def _attach_memmaps(rank: int) -> Dict[str, torch.Tensor]:
             warnings.filterwarnings("ignore", ".*NumPy array is not writable.*")
             shared_tensors["split"] = torch.from_numpy(spl_mm)  # int8
 
-    # ⭐ NEW: Handle transformer aggregation mode neighbor datasets (format-aware)
+    # NEW: Handle transformer aggregation mode neighbor datasets (format-aware)
     aggregation_mode = manifest.get("aggregation_mode", "mean")
     shared_tensors["aggregation_mode"] = aggregation_mode
     
@@ -640,7 +640,7 @@ def _attach_memmaps(rank: int) -> Dict[str, torch.Tensor]:
             log.warning(f"[rank: {rank}] Transformer mode but no neighbor data found in manifest!")
 
     shared_tensors["_memmaps"] = memmaps  # keep refs
-    log.info(f"✅ [rank: {rank}] Attached. Total: {manifest['memory_gb']:.2f} GB (mode: {aggregation_mode})")
+    log.info(f"[rank: {rank}] Attached. Total: {manifest['memory_gb']:.2f} GB (mode: {aggregation_mode})")
     log.info(f"[rank: {rank}] Tensor shapes - Tabular: {shared_tensors['tabular'].shape}, "
             f"ESM: {shared_tensors['esm'].shape}")
     if manifest.get("has_split", False):
@@ -730,7 +730,7 @@ class SharedMemoryDataset(Dataset):
             'h5_index': global_idx
         }
         
-        # ⭐ NEW: Detect aggregation mode from shared tensors
+        # NEW: Detect aggregation mode from shared tensors
         aggregation_mode = self.shared_tensors.get('aggregation_mode', 'mean')
         sample['aggregation_mode'] = aggregation_mode
         
@@ -739,7 +739,7 @@ class SharedMemoryDataset(Dataset):
             # Always include single ESM embedding
             sample['esm'] = torch.from_numpy(np.array(self.shared_tensors['esm'][global_idx])).float()
             
-            # ⭐ V3: Residue-table indices (new format)
+            # NEW V3: Residue-table indices (new format)
             if 'neighbor_residue_indices' in self.shared_tensors:
                 neighbor_indices = self.shared_tensors['neighbor_residue_indices'][global_idx]
                 neighbor_distances = self.shared_tensors['neighbor_distances'][global_idx]
@@ -765,7 +765,7 @@ class SharedMemoryDataset(Dataset):
                 sample['neighbor_resnums'] = torch.from_numpy(np.array(neighbor_resnums)).long()
                 sample['knn_aggregated'] = False
 
-            # ⭐ V2: Reconstruct neighbor embeddings from indices
+            # NEW V2: Reconstruct neighbor embeddings from indices
             elif 'neighbor_h5_indices' in self.shared_tensors:
                 # Space-efficient v2 format: indices → embeddings
                 neighbor_indices = self.shared_tensors['neighbor_h5_indices'][global_idx]  # [k]
@@ -815,7 +815,7 @@ class SharedMemoryDataset(Dataset):
                 
                 sample['knn_aggregated'] = False  # Will be aggregated by model
                 
-            # ⭐ V1: Pre-materialized neighbor embeddings (legacy)
+            # NEW V1: Pre-materialized neighbor embeddings (legacy)
             elif 'esm_neighbors' in self.shared_tensors:
                 sample['esm_neighbors'] = torch.from_numpy(np.array(self.shared_tensors['esm_neighbors'][global_idx])).float()
                 sample['neighbor_distances'] = torch.from_numpy(np.array(self.shared_tensors['neighbor_distances'][global_idx])).float()
@@ -1150,10 +1150,10 @@ class TrueSharedMemoryDataModule(LightningDataModule):
         tp, vp = to_pdb4set(train_proteins), to_pdb4set(val_proteins)
         overlap = (tp & vp) | (tp & bu48_codes) | (vp & bu48_codes)
         if overlap:
-            log.info(f"ℹ️ PDB overlap detected (different chains): {sorted(list(overlap))[:5]} ...")
+            log.info(f"PDB overlap detected (different chains): {sorted(list(overlap))[:5]} ...")
             log.info("Note: This is expected with chain-level embeddings where different chains from the same PDB are in different splits.")
         else:
-            log.info("✅ Verified: No BU48 in train/val and no train↔val protein overlap.")
+            log.info("Verified: No BU48 in train/val and no train<->val protein overlap.")
 
         self._apply_train_indices_override()
         self._apply_hard_positive_replay()

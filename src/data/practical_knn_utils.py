@@ -18,7 +18,7 @@ import logging
 log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[2]))
-DEFAULT_PDB_DIRECTORIES = [
+LEGACY_PDB_SEARCH_PATHS = [
     PROJECT_ROOT / "data" / "p2rank-datasets" / "joined" / "bu48",
     PROJECT_ROOT / "data" / "p2rank-datasets" / "joined" / "b210",
     PROJECT_ROOT / "data" / "p2rank-datasets" / "chen11_test_prep",
@@ -69,7 +69,7 @@ def get_protein_residue_sequence(protein_key: str, pdb_base_dir: str = None) -> 
         ])
     
     # Default search directories relative to the project
-    for base_path in DEFAULT_PDB_DIRECTORIES:
+    for base_path in LEGACY_PDB_SEARCH_PATHS:
         if not base_path.exists():
             continue
         candidate_dirs = [base_path]

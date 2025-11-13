@@ -127,8 +127,8 @@ def analyse_dataset(csv_path: Path, bu48_set: Set[str], val_frac: float, seed: i
             if row_count % 500000 == 0:
                 logger.info(f"  Loaded {row_count:,} rows, {len(protein_order)} unique proteins...")
 
-    logger.info(f"✅ Loaded {row_count:,} rows into RAM")
-    logger.info(f"✅ Found {len(protein_order)} unique proteins")
+    logger.info(f"Loaded {row_count:,} rows into RAM")
+    logger.info(f"Found {len(protein_order)} unique proteins")
     
     non_bu48 = [key for key in protein_order if not protein_is_bu48[key]]
     split_map = grouped_split(non_bu48, val_frac, seed)

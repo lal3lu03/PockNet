@@ -93,7 +93,7 @@ def enhanced_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
     
     batched = {}
     
-    # ⭐ NEW: Check if this is transformer mode (has neighbor tensors)
+    # NEW: Check if this is transformer mode (has neighbor tensors)
     is_transformer_mode = 'esm_neighbors' in batch[0]
     
     for key in all_keys:
@@ -105,7 +105,7 @@ def enhanced_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         try:
             first_value = values[0]
             
-            # ⭐ NEW: Special handling for transformer mode neighbor tensors
+            # NEW: Special handling for transformer mode neighbor tensors
             if key in ['esm_neighbors', 'neighbor_distances', 'neighbor_resnums'] and is_transformer_mode:
                 # These are [k, D] or [k] tensors that need to be stacked to [B, k, D] or [B, k]
                 tensors = []
@@ -133,7 +133,7 @@ def enhanced_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
             
             # Handle different data types
             if isinstance(first_value, str):
-                # ⭐ FIX: Collapse uniform string fields to scalar (e.g., aggregation_mode)
+                # FIX: Collapse uniform string fields to scalar (e.g., aggregation_mode)
                 # Check if all values are identical
                 if all(v == first_value for v in values):
                     batched[key] = first_value  # Single scalar string
