@@ -28,7 +28,39 @@ from typing import Iterable, Optional, Tuple, Set
 
 import torch
 from Bio.PDB import PDBParser
-from Bio.PDB.Polypeptide import is_aa, three_to_one
+try:  # BioPython < 1.84
+    from Bio.PDB.Polypeptide import is_aa, three_to_one
+except ImportError:  # BioPython >= 1.84 removed three_to_one
+    from Bio.PDB.Polypeptide import is_aa
+
+    _AA_THREE_TO_ONE = {
+        "ALA": "A",
+        "ARG": "R",
+        "ASN": "N",
+        "ASP": "D",
+        "CYS": "C",
+        "GLU": "E",
+        "GLN": "Q",
+        "GLY": "G",
+        "HIS": "H",
+        "ILE": "I",
+        "LEU": "L",
+        "LYS": "K",
+        "MET": "M",
+        "PHE": "F",
+        "PRO": "P",
+        "SER": "S",
+        "THR": "T",
+        "TRP": "W",
+        "TYR": "Y",
+        "VAL": "V",
+        "SEC": "U",
+        "PYL": "O",
+    }
+
+    def three_to_one(resname: str) -> str:
+        """Minimal fallback for BioPython ≥1.84."""
+        return _AA_THREE_TO_ONE.get(resname.strip().upper(), "X")
 import esm
 
 

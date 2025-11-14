@@ -21,13 +21,17 @@ can detect regressions without parsing log files.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -55,6 +59,7 @@ DEFAULT_TRAIN_CONFIG = "train.yaml"
 DEFAULT_PDB_ROOT = PROJECT_ROOT / "data" / "p2rank-datasets"
 DEFAULT_BU48_LIST = PROJECT_ROOT / "data" / "bu48_proteins.txt"
 DEFAULT_RELEASE_CHECKPOINT = PROJECT_ROOT / "logs" / "fusion_transformer_aggressive_oct17" / "runs" / "2025-10-23_blend_sweep" / "selective_swa_epoch09_12.ckpt"
+TMP_ROOT = PROJECT_ROOT / "tmp" / "single_runs"
 
 LOG = logging.getLogger("pocknet.e2e")
 
@@ -128,6 +133,279 @@ def _write_json(payload: Dict[str, Any], destination: Path) -> None:
     """Write dictionaries as pretty-printed JSON for downstream automation."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _run_subprocess(args: Sequence[str], cwd: Optional[Path] = None) -> None:
+    """Execute a subprocess while streaming stdout/stderr."""
+    pretty = " ".join(args)
+    LOG.info("Running command: %s", pretty)
+    subprocess.run(args, cwd=str(cwd or PROJECT_ROOT), check=True)
+
+
+def _derive_protein_id(file_name: str) -> str:
+    stem = Path(file_name).stem.lower()
+    if "_" in stem:
+        head, tail = stem.rsplit("_", 1)
+        if len(tail) <= 2 and tail.isalpha():
+            return head
+    return stem
+
+
+def _match_h5_protein_id(loader: ProteinPointLoader, requested: str) -> str:
+    """Return the actual protein key stored in the H5/CSV pair."""
+    if loader.h5_index.has_protein(requested):
+        return requested
+
+    available = loader.h5_index.proteins()
+    if not available:
+        return requested
+
+    requested_lower = requested.lower()
+
+    # Exact (case-insensitive) match
+    for key in available:
+        if key.lower() == requested_lower:
+            return key
+
+    # Prefix like requested_chain
+    prefix_hits = [key for key in available if key.lower().startswith(f"{requested_lower}_")]
+    if prefix_hits:
+        return prefix_hits[0]
+
+    # Substring fallback
+    substring_hits = [key for key in available if requested_lower in key.lower()]
+    if substring_hits:
+        return substring_hits[0]
+
+    # Fallback to first available entry
+    return available[0]
+
+
+def _ensure_chainfix_csv(raw_csv: Path, destination: Path) -> None:
+    if not raw_csv.exists():
+        raise FileNotFoundError(raw_csv)
+
+    with raw_csv.open() as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise RuntimeError("vectorsTrain.csv missing header row")
+
+        fieldnames = list(reader.fieldnames)
+        if "chain_id" not in fieldnames:
+            insert_at = fieldnames.index("residue_number") if "residue_number" in fieldnames else len(fieldnames)
+            fieldnames.insert(insert_at, "chain_id")
+        for extra in ("protein_id", "residue_id"):
+            if extra not in fieldnames:
+                fieldnames.append(extra)
+
+        residue_counters: Dict[tuple[str, str], int] = {}
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", newline="") as sink:
+            writer = csv.DictWriter(sink, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in reader:
+                file_name = row.get("file_name", "unknown.pdb")
+                chain_id = (row.get("chain_id") or row.get("chain") or "A").strip().upper() or "A"
+                row["chain_id"] = chain_id
+
+                protein_id = row.get("protein_id") or _derive_protein_id(file_name)
+                row["protein_id"] = protein_id
+
+                residue_num = row.get("residue_number")
+                try:
+                    residue_val = int(float(residue_num)) if residue_num not in (None, "") else None
+                except ValueError:
+                    residue_val = None
+
+                if residue_val is None:
+                    key = (file_name, chain_id)
+                    residue_counters[key] = residue_counters.get(key, 0) + 1
+                    residue_val = residue_counters[key]
+
+                row["residue_number"] = residue_val
+                row["residue_id"] = f"{protein_id}:{chain_id}:{residue_val}"
+                writer.writerow(row)
+
+
+@dataclass
+class PreparedAssets:
+    h5_path: Path
+    csv_path: Path
+    workspace: Path
+    ds_file: Path
+
+
+def _manifest_path(workspace: Path) -> Path:
+    return workspace / "manifest.json"
+
+
+def _load_manifest(workspace: Path) -> Dict[str, Any]:
+    manifest_file = _manifest_path(workspace)
+    if not manifest_file.exists():
+        return {}
+    try:
+        return json.loads(manifest_file.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def _save_manifest(workspace: Path, manifest: Dict[str, Any]) -> None:
+    manifest_file = _manifest_path(workspace)
+    manifest_file.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
+def _find_existing_workspace(pdb_path: Path) -> Optional[Path]:
+    if not TMP_ROOT.exists():
+        return None
+    candidates: List[tuple[float, Path]] = []
+    target = str(pdb_path.resolve())
+    pattern = f"{pdb_path.stem}_*"
+    for manifest in TMP_ROOT.glob(f"{pattern}/manifest.json"):
+        workspace = manifest.parent
+        data = _load_manifest(workspace)
+        if data.get("original_pdb") == target:
+            candidates.append((manifest.stat().st_mtime, workspace))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def _prepare_single_protein_assets(
+    pdb_file: Path,
+    device_hint: str = "cpu",
+    thread_budget: Optional[int] = None,
+) -> PreparedAssets:
+    TMP_ROOT.mkdir(parents=True, exist_ok=True)
+    resolved_pdb = pdb_file.resolve()
+    workspace = _find_existing_workspace(resolved_pdb)
+    if workspace is None:
+        workspace = Path(tempfile.mkdtemp(prefix=f"{pdb_file.stem}_", dir=str(TMP_ROOT)))
+    manifest = _load_manifest(workspace)
+    manifest.setdefault("original_pdb", str(resolved_pdb))
+    manifest.setdefault("created", time.time())
+
+    pdb_local_dir = workspace / "pdbs"
+    pdb_local_dir.mkdir(parents=True, exist_ok=True)
+    local_pdb = Path(manifest.get("local_pdb", pdb_local_dir / pdb_file.name))
+    if not local_pdb.exists():
+        local_pdb = pdb_local_dir / pdb_file.name
+        shutil.copy2(pdb_file, local_pdb)
+    manifest["local_pdb"] = str(local_pdb.resolve())
+    _save_manifest(workspace, manifest)
+
+    ds_path = workspace / "single.ds"
+    with ds_path.open("w") as fh:
+        fh.write("# Auto-generated dataset for single protein inference\n")
+        fh.write(str(local_pdb.resolve()).replace("\\", "/") + "\n")
+    manifest["ds_file"] = str(ds_path)
+    _save_manifest(workspace, manifest)
+
+    cpu_total = os.cpu_count() or 4
+    default_threads = max(1, math.floor(cpu_total * 0.8))
+    threads = default_threads if not thread_budget or thread_budget <= 0 else thread_budget
+
+    features_dir = workspace / "features"
+    features_dir.mkdir(parents=True, exist_ok=True)
+    base_vectors = features_dir / "vectorsTrain.csv"
+    if not base_vectors.exists():
+        LOG.info("Feature CSV not found; extracting SAS/tabular features.")
+        _run_subprocess(
+            [
+                sys.executable,
+                str(PROJECT_ROOT / "src" / "datagen" / "extract_protein_features.py"),
+                str(ds_path),
+                str(features_dir),
+                "--threads",
+                str(threads),
+            ]
+        )
+        if not base_vectors.exists():
+            raise click.ClickException("Feature extraction did not produce vectorsTrain.csv")
+    else:
+        LOG.info("Reusing existing feature CSV from %s", base_vectors)
+    manifest["feature_csv"] = str(base_vectors)
+    _save_manifest(workspace, manifest)
+
+    chainfix_csv = workspace / "vectorsTrain_chainfix.csv"
+    if not chainfix_csv.exists():
+        LOG.info("Generating chainfix CSV for standalone protein.")
+        _ensure_chainfix_csv(base_vectors, chainfix_csv)
+    else:
+        LOG.info("Reusing existing chainfix CSV at %s", chainfix_csv)
+    manifest["chainfix_csv"] = str(chainfix_csv)
+    _save_manifest(workspace, manifest)
+
+    embeddings_dir = workspace / "esm"
+    embeddings_dir.mkdir(parents=True, exist_ok=True)
+    embedding_files = list(embeddings_dir.glob("*.pt"))
+    if not embedding_files:
+        LOG.info("Generating ESM embeddings for standalone protein.")
+        _run_subprocess(
+            [
+                sys.executable,
+                str(PROJECT_ROOT / "src" / "datagen" / "generate_esm2_embeddings.py"),
+                "--ds-file",
+                str(ds_path),
+                "--pdb-base",
+                str(pdb_local_dir),
+                "--out-dir",
+                str(embeddings_dir),
+                "--device",
+                device_hint,
+                "--force",
+            ]
+        )
+        embedding_files = list(embeddings_dir.glob("*.pt"))
+        if not embedding_files:
+            raise click.ClickException("Embedding generation did not produce any .pt files")
+    else:
+        LOG.info("Reusing existing embeddings at %s", embeddings_dir)
+    manifest["embeddings_dir"] = str(embeddings_dir)
+    _save_manifest(workspace, manifest)
+
+    bu48_file = DEFAULT_BU48_LIST if DEFAULT_BU48_LIST.exists() else workspace / "empty_bu48.txt"
+    if not bu48_file.exists():
+        bu48_file.write_text("")
+
+    h5_path = Path(manifest.get("h5_path", workspace / f"{pdb_file.stem}_single.h5"))
+    if not h5_path.exists():
+        LOG.info("Generating single-protein H5 dataset.")
+        worker_count = max(1, threads)
+        _run_subprocess(
+            [
+                sys.executable,
+                str(PROJECT_ROOT / "generate_h5_v2_optimized.py"),
+                "--csv",
+                str(chainfix_csv),
+                "--esm_dir",
+                str(embeddings_dir),
+                "--pdb_base_dir",
+                str(pdb_local_dir),
+                "--bu48_txt",
+                str(bu48_file),
+                "--out",
+                str(h5_path),
+                "--k",
+                "3",
+                "--val_frac",
+                "0.0",
+                "--seed",
+                "42",
+                "--workers",
+                str(worker_count),
+                "--ds_file",
+                str(ds_path),
+            ]
+        )
+        if not h5_path.exists():
+            raise click.ClickException("H5 generation failed to create the dataset")
+    else:
+        LOG.info("Reusing existing H5 dataset at %s", h5_path)
+    manifest["h5_path"] = str(h5_path)
+    _save_manifest(workspace, manifest)
+
+    return PreparedAssets(h5_path=h5_path, csv_path=chainfix_csv, workspace=workspace, ds_file=ds_path)
 
 
 def _run_step(command: Sequence[str], step_name: str) -> float:
@@ -359,63 +637,84 @@ def predict_dataset(
 @cli.command("predict-pdb")
 @click.argument("target")
 @click.option("--checkpoint", required=True, type=click.Path(dir_okay=False, path_type=Path), help="Checkpoint used for residue-level inference.")
-@click.option("--h5", "h5_path", required=True, type=click.Path(dir_okay=False, path_type=Path), help="Existing H5 dataset that already contains the protein of interest.")
-@click.option("--csv", "csv_path", required=True, type=click.Path(path_type=Path), help="CSV/dir with SAS coordinates that correspond to the H5 dataset.")
+@click.option("--h5", "h5_path", type=click.Path(dir_okay=False, path_type=Path), help="Existing H5 dataset that already contains the protein of interest.")
+@click.option("--csv", "csv_path", type=click.Path(path_type=Path), help="CSV/dir with SAS coordinates that correspond to the H5 dataset.")
 @click.option("--output", "output_dir", default=PROJECT_ROOT / "outputs" / "single_protein", show_default=True, type=click.Path(path_type=Path), help="Where to save the generated pockets + metadata.")
 @click.option("--device", default="auto", show_default=True, help="Device hint for Lightning inference (auto|cpu|cuda:0|...).")
 @click.option("--batch-size", default=1024, show_default=True, type=int, help="Batch size used for the residue predictions.")
 @click.option("--threshold", type=float, default=None, help="Optional override for the residue probability threshold.")
+@click.option("--prep-device", default="cpu", show_default=True, help="Device to use when auto-generating embeddings for standalone PDBs.")
+@click.option("--prep-threads", type=int, default=None, help="CPU threads to use during auto-prep (default: 80% of available cores).")
 def predict_single_protein(
     target: str,
     checkpoint: Path,
-    h5_path: Path,
-    csv_path: Path,
+    h5_path: Optional[Path],
+    csv_path: Optional[Path],
     output_dir: Path,
     device: str,
     batch_size: int,
     threshold: Optional[float],
+    prep_device: str,
+    prep_threads: Optional[int],
 ) -> None:
     """
-    Run inference for a single protein.
-
-    The command accepts either a literal protein identifier (matching the keys inside
-    the H5 file) or a path to a PDB file. When a PDB path is given, the filename
-    (without extension) is used as the lookup key and the file itself is copied into
-    the output directory so downstream tools understand what was processed.
+    Run inference for a single protein. If --h5/--csv are omitted and the target
+    resolves to a PDB file, the command will auto-generate the feature CSV, ESM
+    embeddings, and H5 dataset on the fly before performing inference.
     """
     checkpoint = _ensure_path(checkpoint, "checkpoint")
-    h5_path = _ensure_path(h5_path, "H5 dataset")
-    csv_path = _ensure_path(csv_path, "feature CSV directory/file")
-
     output_dir.mkdir(parents=True, exist_ok=True)
 
     protein_id = _infer_protein_id(target)
-    click.echo(f"Resolved protein identifier: {protein_id}")
 
     pdb_candidate = Path(target)
+    auto_assets: Optional[PreparedAssets] = None
+    resolved_h5 = h5_path
+    resolved_csv = csv_path
+
+    if resolved_h5 is None or resolved_csv is None:
+        if not pdb_candidate.exists():
+            raise click.ClickException(
+                "Auto-prep requires a PDB filepath. Provide --h5/--csv explicitly or pass an existing PDB file."
+            )
+        click.echo("Generating features/embeddings/H5 for standalone PDB...")
+        auto_assets = _prepare_single_protein_assets(
+            pdb_candidate,
+            device_hint=prep_device,
+            thread_budget=prep_threads,
+        )
+        resolved_h5 = auto_assets.h5_path
+        resolved_csv = auto_assets.csv_path
+        click.echo(f"Auto-prep workspace: {auto_assets.workspace}")
+
+    h5_resolved = _ensure_path(resolved_h5, "H5 dataset")
+    csv_resolved = _ensure_path(resolved_csv, "feature CSV directory/file")
+
+    click.echo(f"Resolved protein identifier: {protein_id}")
     if pdb_candidate.exists():
         shutil.copy2(pdb_candidate, output_dir / pdb_candidate.name)
 
-    loader = ProteinPointLoader(h5_path, csv_path, cache_dir=output_dir / "cache")
-    coords, residue_numbers, _ = loader.get_protein_arrays(protein_id)
+    loader = ProteinPointLoader(h5_resolved, csv_resolved, cache_dir=output_dir / "cache")
+    resolved_key = _match_h5_protein_id(loader, protein_id)
+    coords, residue_numbers, _ = loader.get_protein_arrays(resolved_key)
     if coords.size == 0:
         raise click.ClickException(
-            f"No coordinates found for '{protein_id}'. "
+            f"No coordinates found for '{protein_id}' (resolved key '{resolved_key}'). "
             "Ensure the protein is present in the provided H5/CSV pair."
         )
 
     inference_device = None if device == "auto" else device
     predictor = ModelInference(str(checkpoint), device=inference_device)
     predictions = predictor.predict_from_h5(
-        str(h5_path),
-        protein_ids=[protein_id],
+        str(h5_resolved),
+        protein_ids=[resolved_key],
         batch_size=batch_size,
         use_shared_memory=False,
     )
-    probs = predictions.get(protein_id)
+    probs = predictions.get(resolved_key)
     if probs is None or len(probs) == 0:
         raise click.ClickException(
-            f"The checkpoint did not return predictions for '{protein_id}'. "
+            f"The checkpoint did not return predictions for '{protein_id}' (resolved key '{resolved_key}'). "
             "Double-check that the identifier matches the dataset."
         )
 
@@ -433,9 +732,9 @@ def predict_single_protein(
     if threshold is not None:
         params.pred_point_threshold = threshold
     processor = PocketAggregationProcessor(params)
-    pockets = processor.process(protein_id, coords, probs, residue_numbers)
+    pockets = processor.process(resolved_key, coords, probs, residue_numbers)
 
-    csv_text = pockets_to_csv(protein_id, pockets)
+    csv_text = pockets_to_csv(resolved_key, pockets)
     pockets_path = output_dir / f"{protein_id}_pockets.csv"
     pockets_path.write_text(csv_text, encoding="utf-8")
 
