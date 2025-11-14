@@ -1,5 +1,5 @@
 # Reproducible PockNet image pinned to CUDA 12.4.1 runtime on Ubuntu 22.04
-ARG CUDA_IMAGE=nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
+ARG CUDA_IMAGE=nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 FROM ${CUDA_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -15,6 +15,7 @@ RUN apt-get update && \
         python3 \
         python3-pip \
         python3-venv \
+        python-is-python3 \
         git \
         build-essential \
         libgl1 \
