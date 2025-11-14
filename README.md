@@ -137,6 +137,11 @@ make docker-full-run                  # fast-dev full-run using the pinned CLI
 
 ## Data Preparation Pipeline
 
+All experiments share the same manifests:
+
+- **Training/validation:** CHEN11 plus the complete “joint” dataset released with P2Rank (directories under `data/p2rank-datasets/joined/*`). The IDs are merged into `data/all_train.ds`, which `generate_esm2_embeddings.py` and `run_h5_generation_optimized.sh` read by default.
+- **Testing:** BU48 (48 apo/holo pairs) remains untouched during training and is only used for the final evaluations / seed sweeps.
+
 1. **ESM2 embeddings** (per chain):  
    ```bash
    python src/tools/generate_esm2_embeddings.py \
@@ -189,7 +194,24 @@ distance metadata for transformer aggregation. Logs appear in
 
 ## Training
 
-### Quick launch (recommended)
+### CLI-first workflow
+
+All training/evaluation orchestration now flows through the Click CLI:
+
+```bash
+python src/scripts/end_to_end_pipeline.py train-model \
+  --summary outputs/train_summary.json \
+  -o experiment=fusion_transformer_aggressive \
+  -o trainer.devices=2
+```
+
+The command mirrors the methodology chapter in the thesis and writes a JSON
+summary containing the resolved Hydra config, the best checkpoint path, and all
+Lightning metrics. Combine it with the Docker targets for fully reproducible
+runs (see the examples in `REPRODUCIBILITY.md` and
+`tex/master_thesis/91-appendix.tex`).
+
+### Legacy launchers
 
 ```bash
 export PROJECT_ROOT=$(pwd)
@@ -261,6 +283,30 @@ These commands mirror the methodology released with the thesis (see
 `tex/master_thesis/03-methodology.tex` for the workflow narrative and
 `tex/master_thesis/91-appendix.tex` for the reproducibility ledger details).
 
+**End-to-end recipe:**  
+1. `train-model` — trains on the full CHEN11 + joint dataset (as listed in `data/all_train.ds`) and logs the checkpoint path plus metrics to JSON.  
+2. `predict-dataset --split test --h5 data/h5/all_train_transformer_v2_optimized.h5 --checkpoint <best.ckpt>` — runs the release post-processing on BU48 only, writing summaries to `outputs/final_seed_sweep/`.  
+3. `predict-pdb <pdb_or_id>` — sanity-check a specific protein or local PDB file (copies the file into the output dir and writes `pockets.csv` + PyMOL script).  
+4. `full-run` — combines training + evaluation when you want a single command for CI/Docker smoke tests (use overrides to limit batch counts if desired).
+
+### Release metrics (5-seed sweep)
+
+The final BU48 evaluation aggregates **five** independently-seeded SWA runs,
+captures full pocket-level post-processing, and stores all artefacts under
+`outputs/final_seed_sweep/`:
+
+| Metric | Mean | 95% CI | Source |
+| --- | --- | --- | --- |
+| Mean IoU (pocket-level) | 0.1276 | ±0.0124 | `final_seed_sweep/final_ensemble_summary.csv` |
+| Best IoU (oracle pocket) | 0.1580 | ±0.0141 | `final_seed_sweep/final_ensemble_summary.csv` |
+| GT coverage | 0.8979 | ±0.0057 | `final_seed_sweep/final_ensemble_summary.csv` |
+| Avg pockets / protein | 6.37 | ±0.87 | `final_seed_sweep/final_ensemble_summary.csv` |
+| Threshold sweep CSV | – | – | `final_seed_sweep/threshold_sweep_aggregated.csv` |
+
+Per-protein means/standard deviations (for IoU, coverage, pocket counts) are
+available in `final_seed_sweep/protein_aggregated_metrics.csv`, which the thesis
+uses for the qualitative case studies and appendix tables.
+
 ### Current Benchmark Numbers
 
 All metrics are reported on the BU48 test split (48 apo structures) using the
@@ -271,7 +317,7 @@ recreated solvent-accessible surface pipeline:
 | I | TabNet (tabular descriptors) | **0.1498** | 0.231 | Reimplementation of the hand-crafted P2Rank descriptor baseline |
 | II | TabNet + centred ESM2 | 0.1710 | 0.262 | Adds residue language-model context (ESM2-t36-3B) |
 | III | Transformer + kNN (epoch 14) | 0.2780 | **0.424** | Best single checkpoint before SWA |
-| III | Transformer + kNN + SWA | **0.2950** | 0.414 | Stochastic weight averaging (epochs 20–30) |
+| III | Transformer + kNN + SWA | **0.2950** | 0.414 | Single-seed SWA checkpoint (epoch window 20–30); see release metrics above for the 5-seed pocket analysis |
 
 Pocket-level clustering (DBSCAN, `eps=3.0`, `min_samples=5`, score threshold
 `0.91`) yields the following success rates (single-best prediction = Top‑1):
@@ -282,20 +328,21 @@ Pocket-level clustering (DBSCAN, `eps=3.0`, `min_samples=5`, score threshold
 - DCA success@3: 89 %
 
 Full per-protein summaries and qualitative case studies are stored under
-`outputs/pocknet_eval_run_test/`.
+`outputs/pocknet_eval_run_test/` with the aggregated CSV/HTML exports consumed
+by `tex/master_thesis/05-results.tex` and the figure notebooks.
 
 ---
 
 ## Post-processing
 
-The enhanced post-processing and production pipelines are currently being
-refreshed. The P2Rank-inspired aggregator now resides in
+The production-ready post-processing stage is implemented in
 `post_processing/pocketnet_aggregation.py` (see `docs/REFERENCES_P2RANK.md` for
-full provenance) and feeds the CLI runner
-`post_processing.run_production_pipeline` whose default outputs land in
-`post_processing_results/pocknet_production`. The legacy suite remains under
-`post_processing/` and is covered by `src/tests/test_enhanced_pipeline_config.py`,
-but it is not part of the active training workflow yet.
+full provenance) and is exercised via
+`post_processing/run_production_pipeline.py`—the same entry point the CLI
+invokes. DBSCAN success metrics, pocket CSVs, PyMOL renderings, and case-study
+panels are written under `outputs/<run>/` and referenced throughout the thesis.
+The older Groovy-style scripts remain archived in `deprecated/` for historical
+comparisons.
 
 ---
 
