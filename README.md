@@ -53,14 +53,13 @@ conda env create -f environment.yaml
 conda activate pocknet_env
 ```
 
-The environment installs PyTorch 2.4 with CUDA 12.1 support, Lightning 2.5,
+The environment installs PyTorch 2.6 with CUDA 12.4 support, PyTorch Lightning 2.5,
 Hydra tooling, Biopython/DSSP for structural features, and the ESM2 model via
 pip (`fair-esm`).
 
-If you require a different CUDA toolkit version, adjust the `pytorch-cuda`
-entry in `environment.yaml` accordingly or install PyTorch by following the
-official instructions before running `pip install -r` for the remaining
-packages.
+If you require a different CUDA toolkit version, install the matching PyTorch
+build by following the official instructions before running `pip install -r`
+for the remaining packages.
 
 ---
 
@@ -87,11 +86,10 @@ docker run --rm --gpus all \
   -e POCKNET_CHECKPOINT_ROOT=/workspace/checkpoints \
   -e POCKNET_LOG_ROOT=/workspace/logs \
   pocknet:cuda12.4 \
-  python src/train.py experiment=fusion_transformer_aggressive trainer.devices=2
+  train-model -o experiment=fusion_transformer_aggressive -o trainer.devices=2
 ```
 
-The entrypoint defaults to Bash, so you can replace the final command with any
-tooling (e.g., `python src/eval.py ...` or `python -m post_processing.run_production_pipeline ...`).
+The image entrypoint is the Click-based CLI (`python src/scripts/end_to_end_pipeline.py`), so `docker run --rm pocknet:cuda12.4 --help` prints available subcommands. Override with `--entrypoint bash` if you need an interactive shell or want to run arbitrary commands.
 The `REPRODUCIBILITY.md` ledger records the exact commit hash, dataset digests,
 and seed files tied to the image to simplify long-term archiving.
 
@@ -103,6 +101,44 @@ make docker-run ARGS="--help"         # shows the CLI help inside the container
 make docker-run ARGS="train-model -o trainer.fast_dev_run=true"
 make docker-full-run                  # fast-dev full-run using the pinned CLI
 ```
+
+### Published GHCR image
+
+A prebuilt image is available as `ghcr.io/lal3lu03/pocknet` (tags: `1.0.0`, `latest`). The entrypoint already calls `python src/scripts/end_to_end_pipeline.py` and the default command is `--help`, so running the container without arguments prints the CLI help.
+
+```bash
+docker pull ghcr.io/lal3lu03/pocknet:1.0.0
+docker run --rm --gpus all ghcr.io/lal3lu03/pocknet:1.0.0 --help
+```
+
+**Dataset inference from the published image (expects existing H5 + CSV):**
+
+```bash
+docker run --rm --gpus all \
+  -v $PWD/data:/workspace/data \
+  -v $PWD/logs:/workspace/logs \
+  ghcr.io/lal3lu03/pocknet:1.0.0 \
+  predict-dataset \
+  --checkpoint /workspace/checkpoints/selective_swa_epoch09_12.ckpt \
+  --h5 /workspace/data/h5/all_train_transformer_v2_optimized.h5 \
+  --csv /workspace/data/vectorsTrain_all_chainfix.csv \
+  --output /workspace/logs/ghcr_dataset_run
+```
+
+**Single-protein inference with on-the-fly prep (mount your PDB and persist outputs):**
+
+```bash
+docker run --rm --gpus all \
+  -v $PWD/data:/workspace/data \
+  -v $PWD/logs:/workspace/logs \
+  ghcr.io/lal3lu03/pocknet:1.0.0 \
+  predict-pdb /workspace/data/example/1a4j.pdb \
+  --checkpoint /workspace/checkpoints/selective_swa_epoch09_12.ckpt \
+  --output /workspace/logs/ghcr_single_protein \
+  --prep-device cuda:0
+```
+
+The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image via the Dockerfile; override `--checkpoint` if you mount your own weights. Mount additional volumes or adjust `--device`/`--prep-device` as needed for your hardware.
 
 ---
 
@@ -376,6 +412,19 @@ comparisons.
 - `docs/REFERENCES_P2RANK.md` carries the textual provenance statement cited in
   `tex/master_thesis/03-methodology.tex` and Appendix~\ref{app:release-ledger},
   ensuring the post-processing stage keeps the original credit trail intact.
+
+---
+
+## License
+
+Apache License 2.0 — see `LICENSE` for full terms. Include the copyright and
+LICENSE notice when redistributing or modifying the code.
+
+---
+
+## Acknowledgements
+
+Supervised by Univ. Prof. Mag. Dr. Günter Klambauer and Florian Sestak, MSc.
 
 ---
 
