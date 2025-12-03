@@ -65,7 +65,7 @@ for the remaining packages.
 
 ## Docker Image (Reproducible Release)
 
-The repository ships a pinned Docker build that captures the CUDA 12.4.1 + CUDNN 9 runtime, PyTorch 2.6 wheels, all Python dependencies from `requirements.txt`, and pre-downloaded ESM2 model weights (6GB). This enables fully offline execution without network access at runtime.
+The repository ships a pinned Docker build that captures the CUDA 12.4.1 + CUDNN 9 runtime, PyTorch 2.6 wheels, and all Python dependencies from `requirements.txt`.
 
 Build the image from the repository root:
 
@@ -76,8 +76,13 @@ docker build -t pocknet:cuda12.4 .
 The build process:
 1. Installs all Python dependencies
 2. Downloads the PockNet checkpoint (~2.2GB) from Hugging Face
-3. Pre-downloads ESM2 model weights to `/workspace/.cache/torch/hub/checkpoints/`
-4. Copies the codebase into `/workspace/PockNet/`
+3. Copies the codebase into `/workspace/PockNet/`
+
+**ESM2 Model Weights:** The 6GB ESM2 model (`esm2_t36_3B_UR50D`) is downloaded on first use and cached in the mounted volume. To avoid repeated downloads, mount a persistent cache directory:
+
+```bash
+-v $PWD/esm_cache:/workspace/.cache/torch
+```
 
 The image entrypoint is the Click-based CLI (`python src/scripts/end_to_end_pipeline.py`), so `docker run --rm pocknet:cuda12.4 --help` prints available subcommands.
 
@@ -90,6 +95,7 @@ docker run --rm \
   -v $PWD/data:/workspace/data \
   -v $PWD/logs:/workspace/logs \
   -v $PWD/tmp:/workspace/PockNet/tmp \
+  -v $PWD/esm_cache:/workspace/.cache/torch \
   pocknet:cuda12.4 \
   predict-pdb /workspace/data/example/1a4j.pdb \
     --output /workspace/logs/single_protein \
@@ -101,11 +107,14 @@ docker run --rm \
 | `data:/workspace/data` | Input PDB files, datasets | All commands |
 | `logs:/workspace/logs` | Output predictions, metrics | All commands |
 | `tmp:/workspace/PockNet/tmp` | Intermediate artifacts (features, embeddings, H5) | `predict-pdb` resume/continuation |
+| `esm_cache:/workspace/.cache/torch` | ESM2 model weights (6GB, downloaded on first use) | `predict-pdb`, `auto-run` |
 
 **Why mount `/tmp`?** The `predict-pdb` command generates intermediate files (SAS features, ESM embeddings, H5 datasets) in `/workspace/PockNet/tmp/single_runs/<protein>_<hash>/`. Mounting this directory enables:
 - **Resume on failure**: Re-running the same command reuses existing artifacts
 - **Inspection**: Access intermediate outputs for debugging
 - **Disk management**: Clean up old workspaces manually
+
+**Why mount `esm_cache`?** The ESM2 model (~6GB) is downloaded from Facebook AI on first use. Mounting this cache prevents re-downloading the model for every container run.
 
 Without mounting `/tmp`, all intermediate work is lost when the container stops.
 
@@ -117,6 +126,7 @@ Without mounting `/tmp`, all intermediate work is lost when the container stops.
     -v $PWD/data:/workspace/data \
     -v $PWD/logs:/workspace/logs \
     -v $PWD/tmp:/workspace/PockNet/tmp \
+    -v $PWD/esm_cache:/workspace/.cache/torch \
     pocknet:cuda12.4 \
     predict-pdb /workspace/data/example/1a4j.pdb \
       --output /workspace/logs/single_protein \
@@ -129,26 +139,12 @@ Without mounting `/tmp`, all intermediate work is lost when the container stops.
     -v $PWD/data:/workspace/data \
     -v $PWD/logs:/workspace/logs \
     -v $PWD/tmp:/workspace/PockNet/tmp \
+    -v $PWD/esm_cache:/workspace/.cache/torch \
     pocknet:cuda12.4 \
     predict-pdb /workspace/data/example/1a4j.pdb \
       --output /workspace/logs/single_protein \
       --prep-device cpu
   ```
-
-### Network Isolation
-
-The image works with `--network none` since all models are pre-cached:
-
-```bash
-docker run --rm --network none \
-  -v $PWD/data:/workspace/data \
-  -v $PWD/logs:/workspace/logs \
-  -v $PWD/tmp:/workspace/PockNet/tmp \
-  pocknet:cuda12.4 \
-  predict-pdb /workspace/data/example/1a4j.pdb \
-    --output /workspace/logs/single_protein \
-    --prep-device cpu
-```
 
 ### Makefile Shortcuts
 
@@ -188,13 +184,14 @@ docker run --rm --gpus all \
   -v $PWD/data:/workspace/data \
   -v $PWD/logs:/workspace/logs \
   -v $PWD/tmp:/workspace/PockNet/tmp \
+  -v $PWD/esm_cache:/workspace/.cache/torch \
   ghcr.io/lal3lu03/pocknet:1.0.0 \
   predict-pdb /workspace/data/example/1a4j.pdb \
     --output /workspace/logs/single_protein \
     --prep-device cuda:0
 ```
 
-The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image and used by default. Override with `--checkpoint <path>` only when testing custom weights. The default prediction threshold is **0.88** (configurable via `--threshold`).
+**Note:** Network access is required on first run to download the ESM2 model (~6GB). Mount `esm_cache` to persist the model between runs. The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image and used by default. Override with `--checkpoint <path>` only when testing custom weights. The default prediction threshold is **0.88** (configurable via `--threshold`).
 
 ---
 
