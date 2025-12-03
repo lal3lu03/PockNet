@@ -154,15 +154,14 @@ def generate_embeddings(entries: list[Tuple[Path, str]],
     """
     Generate ESM2 embeddings for the supplied PDB entries.
     """
-    # Set shared cache locations
-    os.environ["TORCH_HOME"] = "/system/user/studentwork/hageneder/cache/torch"
-    os.environ["TORCH_MODEL_ZOO"] = "/system/user/studentwork/hageneder/cache/torch"
-    os.environ["TRANSFORMERS_CACHE"] = "/system/user/studentwork/hageneder/cache/transformers"
-    os.environ["HF_HOME"] = "/system/user/studentwork/hageneder/cache/hf"
+    # Use TORCH_HOME from environment if set, otherwise use default cache
+    if "TORCH_HOME" not in os.environ:
+        os.environ["TORCH_HOME"] = os.path.expanduser("~/.cache/torch")
 
     print("=" * 80)
     print("Generating ESM2 embeddings (esm2_t36_3B_UR50D)")
     print("=" * 80)
+    print(f"Cache location   : {os.environ.get('TORCH_HOME', 'default')}")
     print(f"Target directory : {out_dir}")
     print(f"Device           : {device}")
     print(f"Total entries    : {len(entries)}")

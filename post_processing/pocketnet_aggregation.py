@@ -45,7 +45,7 @@ except ImportError:  # pragma: no cover
 class PocketAggregationParams:
     """Configuration mirroring key P2Rank parameters."""
 
-    pred_point_threshold: float = 0.35
+    pred_point_threshold: float = 0.88
     pred_min_cluster_size: int = 3
     pred_clustering_dist: float = 3.0
     extended_pocket_cutoff: float = 3.5
