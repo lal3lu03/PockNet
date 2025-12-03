@@ -305,11 +305,22 @@ complete workflows with a single command.
 | Command | Purpose | Example |
 | --- | --- | --- |
 | `train-model` | Launch Hydra/Lightning training and store a JSON summary. | `python src/scripts/end_to_end_pipeline.py train-model --summary outputs/train_summary.json -o trainer.fast_dev_run=true` |
+| `auto-run` | From a dataset or PDB root, generate features, embeddings, H5, and run inference with the baked checkpoint by default. | `python src/scripts/end_to_end_pipeline.py auto-run data/all_train.ds --pdb-root data/p2rank-datasets --device cuda:0 --threads 8` |
 | `predict-dataset` | Run checkpoint + pocket aggregation over an H5 dataset. | `python src/scripts/end_to_end_pipeline.py predict-dataset --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_eval_cli --max-proteins 2` |
 | `predict-pdb` | Produce pockets for a single protein or local PDB file. | `python src/scripts/end_to_end_pipeline.py predict-pdb 1a4j_H --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_single` |
 | `full-run` | (Optionally) train and immediately execute production inference. | `python src/scripts/end_to_end_pipeline.py full-run --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/release_candidate -o trainer.fast_dev_run=true` |
 
 If a baked checkpoint is present (e.g., via the Docker image), the CLI uses it automatically; add `--checkpoint <path>` only when overriding with your own weights.
+
+**Auto-run from a raw dataset:**  
+Point `auto-run` at a `.ds` file, directory, or single PDB plus the PDB root to generate features, ESM2 embeddings, H5, and pockets in one shot (uses the baked checkpoint unless overridden):
+
+```bash
+python src/scripts/end_to_end_pipeline.py auto-run data/all_train.ds \
+  --pdb-root data/p2rank-datasets \
+  --device cuda:0 \
+  --threads 8
+```
 
 > Tip  
 > Add overrides such as `-o trainer.fast_dev_run=true` or

@@ -797,7 +797,7 @@ def predict_single_protein(
     "--checkpoint",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
-    help="Checkpoint used for inference (defaults to the released selective_swa_epoch09_12).",
+    help="Checkpoint used for inference (defaults to baked/release checkpoint when available).",
 )
 @click.option(
     "--pdb-root",
@@ -955,11 +955,7 @@ def auto_run(
     if not h5_path.exists():
         raise click.ClickException(f"H5 dataset not found at {h5_path}.")
 
-    checkpoint_path = (checkpoint.resolve() if checkpoint else DEFAULT_RELEASE_CHECKPOINT)
-    if not checkpoint_path.exists():
-        raise click.ClickException(
-            f"Checkpoint {checkpoint_path} not found. Pass --checkpoint to point at a valid .ckpt file."
-        )
+    checkpoint_path = _resolve_checkpoint_argument(checkpoint)
 
     LOG.info("Running production inference with checkpoint %s", checkpoint_path)
     inference_start = time.time()
