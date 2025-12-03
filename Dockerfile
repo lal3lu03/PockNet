@@ -35,14 +35,6 @@ ARG HF_CHECKPOINT_URL=https://huggingface.co/lal3lu03/PockNet/resolve/main/selec
 RUN mkdir -p ${POCKNET_CHECKPOINT_ROOT} && \
     curl -L --retry 3 "${HF_CHECKPOINT_URL}" -o ${POCKNET_CHECKPOINT_ROOT}/selective_swa_epoch09_12.ckpt
 
-# Pre-download ESM2 model to avoid network requirements at runtime
-ENV TORCH_HOME=/workspace/.cache/torch
-RUN mkdir -p ${TORCH_HOME}/hub/checkpoints && \
-    curl -L --retry 3 "https://dl.fbaipublicfiles.com/fair-esm/models/esm2_t36_3B_UR50D.pt" \
-         -o ${TORCH_HOME}/hub/checkpoints/esm2_t36_3B_UR50D.pt && \
-    curl -L --retry 3 "https://dl.fbaipublicfiles.com/fair-esm/regression/esm2_t36_3B_UR50D-contact-regression.pt" \
-         -o ${TORCH_HOME}/hub/checkpoints/esm2_t36_3B_UR50D-contact-regression.pt
-
 ENV PYTHONPATH=${PROJECT_ROOT}
 
 ENTRYPOINT ["python","src/scripts/end_to_end_pipeline.py"]
