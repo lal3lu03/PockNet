@@ -60,6 +60,8 @@ DEFAULT_PDB_ROOT = PROJECT_ROOT / "data" / "p2rank-datasets"
 DEFAULT_BU48_LIST = PROJECT_ROOT / "data" / "bu48_proteins.txt"
 DEFAULT_RELEASE_CHECKPOINT = PROJECT_ROOT / "logs" / "fusion_transformer_aggressive_oct17" / "runs" / "2025-10-23_blend_sweep" / "selective_swa_epoch09_12.ckpt"
 TMP_ROOT = PROJECT_ROOT / "tmp" / "single_runs"
+CHECKPOINT_FILENAME = "selective_swa_epoch09_12.ckpt"
+DEFAULT_BAKED_CHECKPOINT = Path(os.environ.get("POCKNET_CHECKPOINT_ROOT", PROJECT_ROOT / "checkpoints")) / CHECKPOINT_FILENAME
 
 LOG = logging.getLogger("pocknet.e2e")
 
@@ -119,6 +121,25 @@ def _ensure_path(path: Path, kind: str) -> Path:
     if not path.exists():
         raise click.ClickException(f"Expected {kind} at '{path}', but it does not exist.")
     return path
+
+
+def _resolve_checkpoint_argument(checkpoint: Optional[Path]) -> Path:
+    """
+    Use a supplied checkpoint if provided; otherwise prefer the baked Docker
+    checkpoint, falling back to the release checkpoint path. Errors clearly if
+    nothing suitable is found.
+    """
+    if checkpoint is not None:
+        return _ensure_path(checkpoint, "checkpoint")
+
+    for candidate in (DEFAULT_BAKED_CHECKPOINT, DEFAULT_RELEASE_CHECKPOINT):
+        if candidate.exists():
+            return candidate
+
+    raise click.ClickException(
+        "No checkpoint supplied and no default checkpoint found. "
+        "Pass --checkpoint explicitly or mount one under POCKNET_CHECKPOINT_ROOT."
+    )
 
 
 def _infer_protein_id(target: str) -> str:
@@ -575,7 +596,13 @@ def train_model(config_name: str, override: Sequence[str], summary: Path, show_c
 
 
 @cli.command("predict-dataset")
-@click.option("--checkpoint", required=True, type=click.Path(dir_okay=False, path_type=Path), help="Path to the Lightning checkpoint to load.")
+@click.option(
+    "--checkpoint",
+    required=False,
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Path to the Lightning checkpoint to load (defaults to baked/release checkpoint if available).",
+)
 @click.option("--h5", "h5_path", required=True, type=click.Path(dir_okay=False, path_type=Path), help="Path to the merged H5 file with residues + embeddings.")
 @click.option("--csv", "csv_path", required=True, type=click.Path(path_type=Path), help="vectorsTrain CSV directory or file that matches the H5 file.")
 @click.option("--output", "output_dir", default=PROJECT_ROOT / "outputs" / "production_run", show_default=True, type=click.Path(path_type=Path), help="Destination directory for pockets, metrics and summaries.")
@@ -586,7 +613,7 @@ def train_model(config_name: str, override: Sequence[str], summary: Path, show_c
 @click.option("--threshold", type=float, default=None, help="Override the ligandable residue threshold used by the aggregator.")
 @click.option("--postproc-workers", type=int, default=4, show_default=True, help="Number of CPU threads used for pocket aggregation.")
 def predict_dataset(
-    checkpoint: Path,
+    checkpoint: Optional[Path],
     h5_path: Path,
     csv_path: Path,
     output_dir: Path,
@@ -598,7 +625,7 @@ def predict_dataset(
     postproc_workers: int,
 ) -> None:
     """Run the historical P2Rank-like post-processing pipeline on an H5 dataset."""
-    checkpoint = _ensure_path(checkpoint, "checkpoint")
+    checkpoint_path = _resolve_checkpoint_argument(checkpoint)
     h5_path = _ensure_path(h5_path, "H5 dataset")
     csv_path = _ensure_path(csv_path, "feature CSV directory/file")
 
@@ -609,7 +636,7 @@ def predict_dataset(
         params.pred_point_threshold = threshold
 
     results = run_production_pipeline(
-        checkpoint=checkpoint,
+        checkpoint=checkpoint_path,
         h5_path=h5_path,
         csv_path=csv_path,
         output_root=output_dir,
@@ -623,7 +650,7 @@ def predict_dataset(
 
     summary_payload = {
         "processed_proteins": len(results),
-        "checkpoint": str(checkpoint),
+        "checkpoint": str(checkpoint_path),
         "h5": str(h5_path),
         "csv": str(csv_path),
         "output_dir": str(output_dir),
@@ -636,7 +663,13 @@ def predict_dataset(
 
 @cli.command("predict-pdb")
 @click.argument("target")
-@click.option("--checkpoint", required=True, type=click.Path(dir_okay=False, path_type=Path), help="Checkpoint used for residue-level inference.")
+@click.option(
+    "--checkpoint",
+    required=False,
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Checkpoint used for residue-level inference (defaults to baked/release checkpoint if available).",
+)
 @click.option("--h5", "h5_path", type=click.Path(dir_okay=False, path_type=Path), help="Existing H5 dataset that already contains the protein of interest.")
 @click.option("--csv", "csv_path", type=click.Path(path_type=Path), help="CSV/dir with SAS coordinates that correspond to the H5 dataset.")
 @click.option("--output", "output_dir", default=PROJECT_ROOT / "outputs" / "single_protein", show_default=True, type=click.Path(path_type=Path), help="Where to save the generated pockets + metadata.")
@@ -647,7 +680,7 @@ def predict_dataset(
 @click.option("--prep-threads", type=int, default=None, help="CPU threads to use during auto-prep (default: 80% of available cores).")
 def predict_single_protein(
     target: str,
-    checkpoint: Path,
+    checkpoint: Optional[Path],
     h5_path: Optional[Path],
     csv_path: Optional[Path],
     output_dir: Path,
@@ -662,7 +695,7 @@ def predict_single_protein(
     resolves to a PDB file, the command will auto-generate the feature CSV, ESM
     embeddings, and H5 dataset on the fly before performing inference.
     """
-    checkpoint = _ensure_path(checkpoint, "checkpoint")
+    checkpoint_path = _resolve_checkpoint_argument(checkpoint)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     protein_id = _infer_protein_id(target)
@@ -704,7 +737,7 @@ def predict_single_protein(
         )
 
     inference_device = None if device == "auto" else device
-    predictor = ModelInference(str(checkpoint), device=inference_device)
+    predictor = ModelInference(str(checkpoint_path), device=inference_device)
     predictions = predictor.predict_from_h5(
         str(h5_resolved),
         protein_ids=[resolved_key],
@@ -740,7 +773,7 @@ def predict_single_protein(
 
     summary_payload = {
         "protein_id": protein_id,
-        "checkpoint": str(checkpoint),
+        "checkpoint": str(checkpoint_path),
         "total_points": int(len(coords)),
         "pocket_count": len(pockets),
         "max_pocket_score": max((p.score for p in pockets), default=0.0),

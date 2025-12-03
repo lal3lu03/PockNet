@@ -119,7 +119,6 @@ docker run --rm --gpus all \
   -v $PWD/logs:/workspace/logs \
   ghcr.io/lal3lu03/pocknet:1.0.0 \
   predict-dataset \
-  --checkpoint /workspace/checkpoints/selective_swa_epoch09_12.ckpt \
   --h5 /workspace/data/h5/all_train_transformer_v2_optimized.h5 \
   --csv /workspace/data/vectorsTrain_all_chainfix.csv \
   --output /workspace/logs/ghcr_dataset_run
@@ -133,12 +132,11 @@ docker run --rm --gpus all \
   -v $PWD/logs:/workspace/logs \
   ghcr.io/lal3lu03/pocknet:1.0.0 \
   predict-pdb /workspace/data/example/1a4j.pdb \
-  --checkpoint /workspace/checkpoints/selective_swa_epoch09_12.ckpt \
   --output /workspace/logs/ghcr_single_protein \
   --prep-device cuda:0
 ```
 
-The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image via the Dockerfile; override `--checkpoint` if you mount your own weights. Mount additional volumes or adjust `--device`/`--prep-device` as needed for your hardware.
+The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image via the Dockerfile and is used by default; add `--checkpoint <path>` only if you mount your own weights. Mount additional volumes or adjust `--device`/`--prep-device` as needed for your hardware.
 
 ---
 
@@ -307,9 +305,11 @@ complete workflows with a single command.
 | Command | Purpose | Example |
 | --- | --- | --- |
 | `train-model` | Launch Hydra/Lightning training and store a JSON summary. | `python src/scripts/end_to_end_pipeline.py train-model --summary outputs/train_summary.json -o trainer.fast_dev_run=true` |
-| `predict-dataset` | Run checkpoint + pocket aggregation over an H5 dataset. | `python src/scripts/end_to_end_pipeline.py predict-dataset --checkpoint ckpts/best.ckpt --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_eval_cli --max-proteins 2` |
-| `predict-pdb` | Produce pockets for a single protein or local PDB file. | `python src/scripts/end_to_end_pipeline.py predict-pdb 1a4j_H --checkpoint ckpts/best.ckpt --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_single` |
+| `predict-dataset` | Run checkpoint + pocket aggregation over an H5 dataset. | `python src/scripts/end_to_end_pipeline.py predict-dataset --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_eval_cli --max-proteins 2` |
+| `predict-pdb` | Produce pockets for a single protein or local PDB file. | `python src/scripts/end_to_end_pipeline.py predict-pdb 1a4j_H --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_single` |
 | `full-run` | (Optionally) train and immediately execute production inference. | `python src/scripts/end_to_end_pipeline.py full-run --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/release_candidate -o trainer.fast_dev_run=true` |
+
+If a baked checkpoint is present (e.g., via the Docker image), the CLI uses it automatically; add `--checkpoint <path>` only when overriding with your own weights.
 
 > Tip  
 > Add overrides such as `-o trainer.fast_dev_run=true` or
@@ -321,7 +321,7 @@ These commands mirror the methodology released with the thesis (see
 
 **End-to-end recipe:**  
 1. `train-model` — trains on the full CHEN11 + joint dataset (as listed in `data/all_train.ds`) and logs the checkpoint path plus metrics to JSON.  
-2. `predict-dataset --split test --h5 data/h5/all_train_transformer_v2_optimized.h5 --checkpoint <best.ckpt>` — runs the release post-processing on BU48 only, writing summaries to `outputs/final_seed_sweep/`.  
+2. `predict-dataset --split test --h5 data/h5/all_train_transformer_v2_optimized.h5 [--checkpoint <best.ckpt>]` — runs the release post-processing on BU48 only, writing summaries to `outputs/final_seed_sweep/`. If no checkpoint is given and a baked one is present, it is used automatically.  
 3. `predict-pdb <pdb_or_id>` — sanity-check a specific protein or local PDB file (copies the file into the output dir and writes `pockets.csv` + PyMOL script).  
 4. `full-run` — combines training + evaluation when you want a single command for CI/Docker smoke tests (use overrides to limit batch counts if desired).
 
