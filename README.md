@@ -65,53 +65,110 @@ for the remaining packages.
 
 ## Docker Image (Reproducible Release)
 
-The repository ships a pinned Docker build that captures the CUDA 12.4.1 +
-CUDNN 9 runtime, PyTorch 2.6 wheels, and all Python dependencies declared in
-`requirements.txt`. Build the image directly from the repository root:
+The repository ships a pinned Docker build that captures the CUDA 12.4.1 + CUDNN 9 runtime, PyTorch 2.6 wheels, all Python dependencies from `requirements.txt`, and pre-downloaded ESM2 model weights (6GB). This enables fully offline execution without network access at runtime.
+
+Build the image from the repository root:
 
 ```bash
 docker build -t pocknet:cuda12.4 .
 ```
 
-Run training or evaluation from a clean machine by mounting your datasets,
-checkpoints, and logs into the container and propagating the corresponding
-environment variables:
+The build process:
+1. Installs all Python dependencies
+2. Downloads the PockNet checkpoint (~2.2GB) from Hugging Face
+3. Pre-downloads ESM2 model weights to `/workspace/.cache/torch/hub/checkpoints/`
+4. Copies the codebase into `/workspace/PockNet/`
+
+The image entrypoint is the Click-based CLI (`python src/scripts/end_to_end_pipeline.py`), so `docker run --rm pocknet:cuda12.4 --help` prints available subcommands.
+
+### Volume Mounts (Critical)
+
+Mount these directories to persist data and enable resume functionality:
 
 ```bash
-docker run --rm --gpus all \
-  -v /abs/path/to/data:/workspace/data \
-  -v /abs/path/to/checkpoints:/workspace/checkpoints \
-  -v /abs/path/to/logs:/workspace/logs \
-  -e POCKNET_DATA_ROOT=/workspace/data \
-  -e POCKNET_CHECKPOINT_ROOT=/workspace/checkpoints \
-  -e POCKNET_LOG_ROOT=/workspace/logs \
+docker run --rm \
+  -v $PWD/data:/workspace/data \
+  -v $PWD/logs:/workspace/logs \
+  -v $PWD/tmp:/workspace/PockNet/tmp \
   pocknet:cuda12.4 \
-  train-model -o experiment=fusion_transformer_aggressive -o trainer.devices=2
+  predict-pdb /workspace/data/example/1a4j.pdb \
+    --output /workspace/logs/single_protein \
+    --prep-device cpu
 ```
 
-The image entrypoint is the Click-based CLI (`python src/scripts/end_to_end_pipeline.py`), so `docker run --rm pocknet:cuda12.4 --help` prints available subcommands. Override with `--entrypoint bash` if you need an interactive shell or want to run arbitrary commands.
-The `REPRODUCIBILITY.md` ledger records the exact commit hash, dataset digests,
-and seed files tied to the image to simplify long-term archiving.
+| Volume | Purpose | Required For |
+|--------|---------|--------------|
+| `data:/workspace/data` | Input PDB files, datasets | All commands |
+| `logs:/workspace/logs` | Output predictions, metrics | All commands |
+| `tmp:/workspace/PockNet/tmp` | Intermediate artifacts (features, embeddings, H5) | `predict-pdb` resume/continuation |
 
-You can also rely on the helper targets defined in the `Makefile`:
+**Why mount `/tmp`?** The `predict-pdb` command generates intermediate files (SAS features, ESM embeddings, H5 datasets) in `/workspace/PockNet/tmp/single_runs/<protein>_<hash>/`. Mounting this directory enables:
+- **Resume on failure**: Re-running the same command reuses existing artifacts
+- **Inspection**: Access intermediate outputs for debugging
+- **Disk management**: Clean up old workspaces manually
+
+Without mounting `/tmp`, all intermediate work is lost when the container stops.
+
+### GPU Support
+
+- **With GPU**: Add `--gpus all` (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html))
+  ```bash
+  docker run --rm --gpus all \
+    -v $PWD/data:/workspace/data \
+    -v $PWD/logs:/workspace/logs \
+    -v $PWD/tmp:/workspace/PockNet/tmp \
+    pocknet:cuda12.4 \
+    predict-pdb /workspace/data/example/1a4j.pdb \
+      --output /workspace/logs/single_protein \
+      --prep-device cuda:0
+  ```
+
+- **CPU-only**: Omit `--gpus all` and use `--prep-device cpu` (slower but functional)
+  ```bash
+  docker run --rm \
+    -v $PWD/data:/workspace/data \
+    -v $PWD/logs:/workspace/logs \
+    -v $PWD/tmp:/workspace/PockNet/tmp \
+    pocknet:cuda12.4 \
+    predict-pdb /workspace/data/example/1a4j.pdb \
+      --output /workspace/logs/single_protein \
+      --prep-device cpu
+  ```
+
+### Network Isolation
+
+The image works with `--network none` since all models are pre-cached:
+
+```bash
+docker run --rm --network none \
+  -v $PWD/data:/workspace/data \
+  -v $PWD/logs:/workspace/logs \
+  -v $PWD/tmp:/workspace/PockNet/tmp \
+  pocknet:cuda12.4 \
+  predict-pdb /workspace/data/example/1a4j.pdb \
+    --output /workspace/logs/single_protein \
+    --prep-device cpu
+```
+
+### Makefile Shortcuts
 
 ```bash
 make docker-build                     # builds pocknet:cuda12.4
-make docker-run ARGS="--help"         # shows the CLI help inside the container
-make docker-run ARGS="train-model -o trainer.fast_dev_run=true"
-make docker-full-run                  # fast-dev full-run using the pinned CLI
+make docker-run ARGS="--help"         # shows CLI help
+make docker-run ARGS="predict-pdb /workspace/data/example/1a4j.pdb --output /workspace/logs/test"
+make docker-full-run                  # fast-dev full-run using pinned CLI
 ```
 
-### Published GHCR image
+### Published GHCR Image
 
-A prebuilt image is available as `ghcr.io/lal3lu03/pocknet` (tags: `1.0.0`, `latest`). The entrypoint already calls `python src/scripts/end_to_end_pipeline.py` and the default command is `--help`, so running the container without arguments prints the CLI help.
+Pre-built image available at `ghcr.io/lal3lu03/pocknet` (tags: `1.0.0`, `latest`):
 
 ```bash
 docker pull ghcr.io/lal3lu03/pocknet:1.0.0
-docker run --rm --gpus all ghcr.io/lal3lu03/pocknet:1.0.0 --help
+docker run --rm ghcr.io/lal3lu03/pocknet:1.0.0 --help
 ```
 
-**Dataset inference from the published image (expects existing H5 + CSV):**
+**Dataset inference (requires existing H5 + CSV):**
 
 ```bash
 docker run --rm --gpus all \
@@ -119,24 +176,25 @@ docker run --rm --gpus all \
   -v $PWD/logs:/workspace/logs \
   ghcr.io/lal3lu03/pocknet:1.0.0 \
   predict-dataset \
-  --h5 /workspace/data/h5/all_train_transformer_v2_optimized.h5 \
-  --csv /workspace/data/vectorsTrain_all_chainfix.csv \
-  --output /workspace/logs/ghcr_dataset_run
+    --h5 /workspace/data/h5/all_train_transformer_v2_optimized.h5 \
+    --csv /workspace/data/vectorsTrain_all_chainfix.csv \
+    --output /workspace/logs/dataset_run
 ```
 
-**Single-protein inference with on-the-fly prep (mount your PDB and persist outputs):**
+**Single-protein inference (auto-generates all intermediate files):**
 
 ```bash
 docker run --rm --gpus all \
   -v $PWD/data:/workspace/data \
   -v $PWD/logs:/workspace/logs \
+  -v $PWD/tmp:/workspace/PockNet/tmp \
   ghcr.io/lal3lu03/pocknet:1.0.0 \
   predict-pdb /workspace/data/example/1a4j.pdb \
-  --output /workspace/logs/ghcr_single_protein \
-  --prep-device cuda:0
+    --output /workspace/logs/single_protein \
+    --prep-device cuda:0
 ```
 
-The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image via the Dockerfile and is used by default; add `--checkpoint <path>` only if you mount your own weights. Mount additional volumes or adjust `--device`/`--prep-device` as needed for your hardware.
+The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image and used by default. Override with `--checkpoint <path>` only when testing custom weights. The default prediction threshold is **0.88** (configurable via `--threshold`).
 
 ---
 
