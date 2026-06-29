@@ -1,183 +1,136 @@
-# PockNet Fusion Pipeline
+# PockNet - Protein Binding Site Prediction
 
 ![PockNet Logo](Logo.png)
 
-This repository contains the current production pipeline used to train and
-evaluate the **PockNet** fusion model.  
-The active workflow combines per–surface-point tabular descriptors with ESM2
-transformer embeddings and trains a Lightning module that learns attention over
-structure-aware neighbour sets stored in an optimized H5 file.
+**PockNet** is a research and engineering pipeline for ligand binding-site prediction on protein structures. It combines handcrafted physicochemical surface descriptors, ESM2 protein language model embeddings, and neighbourhood-aware transformer aggregation to predict ligandable surface regions relevant for structure-based drug discovery.
 
-The repository has been trimmed to focus on this transformer‑centric workflow.
-Legacy experiments, notebooks, and random-forest/tabnet variants live under
-`deprecated/` for reference.
+This project was developed as part of my Master's thesis in Artificial Intelligence at Johannes Kepler University Linz, supervised by Günter Klambauer and Florian Sestak.
+
+> Thesis title: **Progressive Feature Enrichment for Ligand Binding-Site Prediction: From Tabular Chemistry to Protein Language Models**
+
+Model artifacts: `https://huggingface.co/lal3lu03/PockNet`
 
 ---
 
-## Highlights
+## Why this matters
 
-- **Single source of truth for data** – feature CSVs and merged chain-fix tables live in `data/`.
-- **Optimized H5 generation** – `generate_h5_v2_optimized.py` writes compact
-  transformer-ready datasets with neighbour indices and distance metadata.
-- **Toggleable k-NN aggregation** – `configs/data/h5_knn_enabled.yaml`
-  configures on-the-fly k-NN aggregation; transformer mode is the default.
-- **Hydra + Lightning** – experiments are reproducible and parameterised via
-  `configs/`, with launch scripts that set up the environment automatically.
-- **Reproducible release** – `Dockerfile`, `REPRODUCIBILITY.md`, and `docs/src_variable_renames.csv`
-  pin the CUDA/PyTorch image, dataset digests, and source renames for auditing.
+An early step in structure-based drug discovery is identifying where small molecules can bind on a protein surface. These binding pockets can guide docking, virtual screening, hit discovery, and downstream molecular design.
 
----
+PockNet studies this task as a supervised surface-point prediction problem:
 
-## Prerequisites
+* **Input**: protein structure
+* **Representation**: solvent-accessible surface points with structural, chemical, and sequence-derived features
+* **Output**: ligandability scores and clustered pocket predictions
 
-1. **Conda** (Miniconda or Anaconda) and CUDA 12.1 capable drivers.
-2. **Git LFS** if you intend to version large binaries (optional).
-3. An NVIDIA GPU for training/running the transformer model.
+The project focuses on one central question:
 
-> **Important**  
-> The training scripts expect the environment variable
-> `PROJECT_ROOT` to point at the repository root.  
-> You can set it once per session:
-> ```bash
-> export PROJECT_ROOT=$(pwd)
-> ```
+> How much do local physicochemical descriptors, protein language model embeddings, and spatial neighbourhood context each contribute to binding-site prediction?
 
 ---
 
-## Environment Setup
+## Project summary
 
-Create the main environment (named `pocknet_env`) and activate it:
+PockNet is built around a staged feature enrichment design.
 
-```bash
-conda env create -f environment.yaml
-conda activate pocknet_env
-```
+| Stage     | Model              | Input features                                           | Purpose                                               |
+| --------- | ------------------ | -------------------------------------------------------- | ----------------------------------------------------- |
+| Stage I   | Tabular baseline   | 35 P2Rank-style physicochemical descriptors              | Reproduce and modernize a strong handcrafted baseline |
+| Stage II  | Tabular + ESM2     | Physicochemical descriptors + centred residue embeddings | Add sequence-derived protein language model context   |
+| Stage III | Transformer fusion | Surface descriptors + ESM2 + kNN neighbourhood attention | Model spatially coherent pocket regions               |
 
-The environment installs PyTorch 2.6 with CUDA 12.4 support, PyTorch Lightning 2.5,
-Hydra tooling, Biopython/DSSP for structural features, and the ESM2 model via
-pip (`fair-esm`).
-
-If you require a different CUDA toolkit version, install the matching PyTorch
-build by following the official instructions before running `pip install -r`
-for the remaining packages.
+The final fusion model predicts ligandable solvent-accessible surface points and converts high-scoring regions into ranked pocket predictions using DBSCAN-style clustering and P2Rank-inspired post-processing.
 
 ---
 
-## Docker Image (Reproducible Release)
+## Key features
 
-The repository ships a pinned Docker build that captures the CUDA 12.4.1 + CUDNN 9 runtime, PyTorch 2.6 wheels, and all Python dependencies from `requirements.txt`.
+* **Biomedical AI application**: protein binding-site prediction for structure-based drug discovery
+* **Protein language models**: ESM2 embeddings for residue-level biological context
+* **Surface-based learning**: solvent-accessible surface point representation
+* **Transformer fusion**: kNN-restricted neighbourhood attention over local protein surface regions
+* **Reproducible ML pipeline**: Hydra configs, PyTorch Lightning, deterministic seeds, and logged experiment outputs
+* **Scalable training**: DDP-compatible training for multi-GPU environments
+* **Containerized inference**: Docker image with CLI-based prediction workflows
+* **Post-processing**: pocket clustering, scoring, DCC/DCA success metrics, and PyMOL-ready outputs
 
-Build the image from the repository root:
+---
 
-```bash
-docker build -t pocknet:cuda12.4 .
+## Architecture overview
+
+PockNet combines three complementary information sources:
+
+1. **Local physicochemical descriptors**
+   P2Rank-style 35-dimensional descriptors encode local surface geometry, exposure, hydrophobicity, charge-related patterns, and donor/acceptor statistics.
+
+2. **Protein language model embeddings**
+   ESM2 residue embeddings provide sequence-derived context learned from large protein sequence corpora.
+
+3. **Neighbourhood-aware transformer aggregation**
+   For each solvent-accessible surface point, PockNet gathers nearby surface neighbours using kNN and applies transformer-style attention with distance-aware context aggregation.
+
+The final model predicts a ligandability score for each surface point. High-scoring points are clustered into candidate binding pockets.
+
+```text
+Protein structure
+      |
+      v
+Solvent-accessible surface generation
+      |
+      v
+Physicochemical descriptors + ESM2 residue embeddings
+      |
+      v
+kNN neighbourhood construction
+      |
+      v
+Transformer fusion model
+      |
+      v
+Point-wise ligandability scores
+      |
+      v
+DBSCAN pocket clustering and ranking
+      |
+      v
+Predicted binding pockets
 ```
 
-The build process:
-1. Installs all Python dependencies
-2. Downloads the PockNet checkpoint (~2.2GB) from Hugging Face
-3. Copies the codebase into `/workspace/PockNet/`
+---
 
-**ESM2 Model Weights:** The 6GB ESM2 model (`esm2_t36_3B_UR50D`) is downloaded on first use and cached in the mounted volume. To avoid repeated downloads, mount a persistent cache directory:
+## Results
 
-```bash
--v $PWD/esm_cache:/workspace/.cache/torch
-```
+Evaluation is performed on **BU48**, a challenging apo/holo benchmark of 48 protein pairs. The model is trained and validated on CHEN11 plus the joint P2Rank dataset split and tested on BU48.
 
-The image entrypoint is the Click-based CLI (`python src/scripts/end_to_end_pipeline.py`), so `docker run --rm pocknet:cuda12.4 --help` prints available subcommands.
+### SAS-point performance
 
-### Volume Mounts (Critical)
+| Stage | Model variant           | BU48 IoUSAS | BU48 AUPRC | Notes                           |
+| ----- | ----------------------- | ----------: | ---------: | ------------------------------- |
+| I     | Tabular baseline        |      0.1498 |      0.231 | 35 handcrafted descriptors      |
+| II    | Tabular + ESM2          |      0.2488 |      0.362 | Adds centred residue embeddings |
+| III   | Transformer + kNN       |       0.309 |      0.437 | Best raw Stage III checkpoint   |
+| III   | Transformer + kNN + SWA |       0.305 |      0.446 | SWA improves AUPRC              |
 
-Mount these directories to persist data and enable resume functionality:
+### Pocket-level performance
 
-```bash
-docker run --rm \
-  -v $PWD/data:/workspace/data \
-  -v $PWD/logs:/workspace/logs \
-  -v $PWD/tmp:/workspace/PockNet/tmp \
-  -v $PWD/esm_cache:/workspace/.cache/torch \
-  pocknet:cuda12.4 \
-  predict-pdb /workspace/data/example/1a4j.pdb \
-    --output /workspace/logs/single_protein \
-    --prep-device cpu
-```
+After DBSCAN-based post-processing and pocket ranking:
 
-| Volume | Purpose | Required For |
-|--------|---------|--------------|
-| `data:/workspace/data` | Input PDB files, datasets | All commands |
-| `logs:/workspace/logs` | Output predictions, metrics | All commands |
-| `tmp:/workspace/PockNet/tmp` | Intermediate artifacts (features, embeddings, H5) | `predict-pdb` resume/continuation |
-| `esm_cache:/workspace/.cache/torch` | ESM2 model weights (6GB, downloaded on first use) | `predict-pdb`, `auto-run` |
+| Metric                             |          Result |
+| ---------------------------------- | --------------: |
+| Mean IoUpocket, five-seed ensemble | 0.128 +/- 0.012 |
+| Best per-protein IoUpocket         | 0.158 +/- 0.014 |
+| Ground-truth coverage              | 0.898 +/- 0.006 |
+| DCC success@1                      |             39% |
+| DCA success@1                      |             75% |
+| DCC success@3                      |             50% |
+| DCA success@3                      |             89% |
 
-**Why mount `/tmp`?** The `predict-pdb` command generates intermediate files (SAS features, ESM embeddings, H5 datasets) in `/workspace/PockNet/tmp/single_runs/<protein>_<hash>/`. Mounting this directory enables:
-- **Resume on failure**: Re-running the same command reuses existing artifacts
-- **Inspection**: Access intermediate outputs for debugging
-- **Disk management**: Clean up old workspaces manually
+These results show that geometric descriptors, protein language model embeddings, and local neighbourhood aggregation provide complementary signals for binding-site prediction.
 
-**Why mount `esm_cache`?** The ESM2 model (~6GB) is downloaded from Facebook AI on first use. Mounting this cache prevents re-downloading the model for every container run.
+---
 
-Without mounting `/tmp`, all intermediate work is lost when the container stops.
+## Example use case
 
-### GPU Support
-
-- **With GPU**: Add `--gpus all` (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html))
-  ```bash
-  docker run --rm --gpus all \
-    -v $PWD/data:/workspace/data \
-    -v $PWD/logs:/workspace/logs \
-    -v $PWD/tmp:/workspace/PockNet/tmp \
-    -v $PWD/esm_cache:/workspace/.cache/torch \
-    pocknet:cuda12.4 \
-    predict-pdb /workspace/data/example/1a4j.pdb \
-      --output /workspace/logs/single_protein \
-      --prep-device cuda:0
-  ```
-
-- **CPU-only**: Omit `--gpus all` and use `--prep-device cpu` (slower but functional)
-  ```bash
-  docker run --rm \
-    -v $PWD/data:/workspace/data \
-    -v $PWD/logs:/workspace/logs \
-    -v $PWD/tmp:/workspace/PockNet/tmp \
-    -v $PWD/esm_cache:/workspace/.cache/torch \
-    pocknet:cuda12.4 \
-    predict-pdb /workspace/data/example/1a4j.pdb \
-      --output /workspace/logs/single_protein \
-      --prep-device cpu
-  ```
-
-### Makefile Shortcuts
-
-```bash
-make docker-build                     # builds pocknet:cuda12.4
-make docker-run ARGS="--help"         # shows CLI help
-make docker-run ARGS="predict-pdb /workspace/data/example/1a4j.pdb --output /workspace/logs/test"
-make docker-full-run                  # fast-dev full-run using pinned CLI
-```
-
-### Published GHCR Image
-
-Pre-built image available at `ghcr.io/lal3lu03/pocknet` (tags: `1.0.0`, `latest`):
-
-```bash
-docker pull ghcr.io/lal3lu03/pocknet:1.0.0
-docker run --rm ghcr.io/lal3lu03/pocknet:1.0.0 --help
-```
-
-**Dataset inference (requires existing H5 + CSV):**
-
-```bash
-docker run --rm --gpus all \
-  -v $PWD/data:/workspace/data \
-  -v $PWD/logs:/workspace/logs \
-  ghcr.io/lal3lu03/pocknet:1.0.0 \
-  predict-dataset \
-    --h5 /workspace/data/h5/all_train_transformer_v2_optimized.h5 \
-    --csv /workspace/data/vectorsTrain_all_chainfix.csv \
-    --output /workspace/logs/dataset_run
-```
-
-**Single-protein inference (auto-generates all intermediate files):**
+Given a protein structure file, PockNet can generate predicted ligandable pockets:
 
 ```bash
 docker run --rm --gpus all \
@@ -191,101 +144,217 @@ docker run --rm --gpus all \
     --prep-device cuda:0
 ```
 
-**Note:** Network access is required on first run to download the ESM2 model (~6GB). Mount `esm_cache` to persist the model between runs. The checkpoint at `/workspace/checkpoints/selective_swa_epoch09_12.ckpt` is baked into the image and used by default. Override with `--checkpoint <path>` only when testing custom weights. The default prediction threshold is **0.88** (configurable via `--threshold`).
+Expected outputs include:
 
----
-
-## Repository Layout
-
-```
-├── README.md                     ← the document you’re reading
-├── environment.yaml              ← conda environment (pocknet_env)
-├── pyproject.toml / setup.py     ← packaging metadata
-├── Dockerfile                  ← CUDA 12.4.1 image with pinned PyTorch deps
-├── launch_aggressive_training.sh ← main Lightning launcher
-├── launch_aggressive_swa.sh      ← SWA follow-up launcher
-├── run_h5_generation_optimized.sh← optimized H5 builder entrypoint
-├── configs/                      ← Hydra config tree (data/experiment/callbacks…)
-├── src/                          ← datagen, datamodules, models, tools, train/eval
-├── src/tests/                    ← current regression test for enhanced pipeline
-├── post_processing/              ← legacy pipeline (under active refresh)
-├── splits/                       ← curated protein ID lists (e.g., BU48)
-├── CLEANUP_SUMMARY.md            ← change log for the cleanup pass
-├── MODEL_CHANGELOG_OCT2025.md    ← high-level model change notes
-├── REPRODUCIBILITY.md            ← frozen commit/dataset/seed ledger
-├── docs/src_variable_renames.csv ← audit of renamed P2Rank-era symbols
-└── seeds/master_seeds.yaml       ← canonical RNG seeds used by Hydra configs
-
-(ignored locally but expected when running the pipeline)
-├── data/                         ← generated features, embeddings, H5 files
-├── logs/                         ← Lightning/Hydra run outputs
-└── deprecated/                   ← archived notebooks & experiments
+```text
+logs/single_protein/
+├── pockets.csv
+├── point_predictions.csv
+├── prediction_summary.json
+├── pymol_visualization.pml
+└── intermediate files
 ```
 
 ---
 
-## Data Preparation Pipeline
+## Installation
 
-All experiments share the same manifests:
+### Conda setup
 
-- **Training/validation:** CHEN11 plus the complete “joint” dataset released with P2Rank (directories under `data/p2rank-datasets/joined/*`). The IDs are merged into `data/all_train.ds`, which `generate_esm2_embeddings.py` and `run_h5_generation_optimized.sh` read by default.
-- **Testing:** BU48 (48 apo/holo pairs) remains untouched during training and is only used for the final evaluations / seed sweeps.
+```bash
+git clone https://github.com/lal3lu03/PockNet.git
+cd PockNet
 
-1. **ESM2 embeddings** (per chain):  
-   ```bash
-   python src/tools/generate_esm2_embeddings.py \
-       --ds-file data/all_train.ds \
-       --pdb-base data/p2rank-datasets \
-       --out-dir data/esm2_3B_chain
-   ```
-   You can pass multiple `--ds-file` arguments or restrict to specific protein
-   lists (`--only-missing data/missing_esm_pdb_ids.txt`).
+conda env create -f environment.yaml
+conda activate pocknet_env
 
-2. **Surface feature extraction** (optional unless you need to regenerate
-   `data/output_train/`):  
-   ```bash
-   python src/datagen/extract_protein_features.py \
-       data/all_train.ds data/output_train
-   ```
+export PROJECT_ROOT=$(pwd)
+```
 
-3. **Chain fix merge** (generates the canonical CSV used by the H5 builder):  
-   ```bash
-   python src/datagen/merge_chainfix_complete.py
-   ```
-   The script reads `data/output_train/*.pdb_features.csv` and produces
-   `data/vectorsTrain_all_chainfix.csv` (overwriting after creating a timestamped
-   backup).
+The environment includes:
 
-> **Reference**  
-> The physicochemical descriptor set and SAS labelling scheme mirror those
-> introduced by **P2Rank** (Krivák & Hoksza, 2018). Please cite their work if
-> you reuse the feature pipeline:  
-> `Krivák, R., & Hoksza, D. (2018). P2Rank: machine learning based tool for rapid`
-> `and accurate prediction of ligand binding sites from protein structure.`
-> `Journal of Cheminformatics, 10(1), 39.`
+* Python
+* PyTorch
+* PyTorch Lightning
+* Hydra
+* Biopython
+* DSSP-related tooling
+* ESM2 dependencies through `fair-esm`
+* HDF5 and scientific Python libraries
+
+A CUDA-capable GPU is recommended for training and large-scale inference.
 
 ---
 
-## H5 Generation
+## Docker setup
 
-Run the optimized generator to write the transformer-ready dataset:
+Build the image locally:
+
+```bash
+docker build -t pocknet:cuda12.4 .
+```
+
+Or pull the published image:
+
+```bash
+docker pull ghcr.io/lal3lu03/pocknet:1.0.0
+```
+
+Check the CLI:
+
+```bash
+docker run --rm ghcr.io/lal3lu03/pocknet:1.0.0 --help
+```
+
+The Docker image contains the PockNet codebase and default checkpoint. ESM2 model weights are downloaded on first use and should be cached through a mounted volume.
+
+Recommended volume mounts:
+
+| Volume                              | Purpose                                           |
+| ----------------------------------- | ------------------------------------------------- |
+| `data:/workspace/data`              | Input structures and datasets                     |
+| `logs:/workspace/logs`              | Prediction outputs and metrics                    |
+| `tmp:/workspace/PockNet/tmp`        | Intermediate feature, embedding, and H5 artifacts |
+| `esm_cache:/workspace/.cache/torch` | Persistent ESM2 model cache                       |
+
+---
+
+## Command line interface
+
+PockNet exposes a Click-based CLI through:
+
+```bash
+python src/scripts/end_to_end_pipeline.py --help
+```
+
+### Main commands
+
+| Command           | Purpose                                                  |
+| ----------------- | -------------------------------------------------------- |
+| `predict-pdb`     | Run inference on a single PDB file or protein ID         |
+| `predict-dataset` | Run inference on an existing H5 dataset                  |
+| `auto-run`        | Generate features, embeddings, H5 files, and predictions |
+| `train-model`     | Launch Hydra/PyTorch Lightning training                  |
+| `full-run`        | Run a combined train and inference workflow              |
+
+---
+
+## Single-protein inference
+
+### Docker
+
+```bash
+docker run --rm --gpus all \
+  -v $PWD/data:/workspace/data \
+  -v $PWD/logs:/workspace/logs \
+  -v $PWD/tmp:/workspace/PockNet/tmp \
+  -v $PWD/esm_cache:/workspace/.cache/torch \
+  ghcr.io/lal3lu03/pocknet:1.0.0 \
+  predict-pdb /workspace/data/example/1a4j.pdb \
+    --output /workspace/logs/single_protein \
+    --prep-device cuda:0
+```
+
+### Local environment
+
+```bash
+export PROJECT_ROOT=$(pwd)
+
+python src/scripts/end_to_end_pipeline.py predict-pdb data/example/1a4j.pdb \
+  --output outputs/single_protein \
+  --prep-device cuda:0
+```
+
+For CPU-only inference:
+
+```bash
+python src/scripts/end_to_end_pipeline.py predict-pdb data/example/1a4j.pdb \
+  --output outputs/single_protein_cpu \
+  --prep-device cpu
+```
+
+CPU mode is functional but significantly slower, especially during ESM2 embedding generation.
+
+---
+
+## Dataset inference
+
+Run inference on a prepared H5 dataset:
+
+```bash
+python src/scripts/end_to_end_pipeline.py predict-dataset \
+  --h5 data/h5/all_train_transformer_v2_optimized.h5 \
+  --csv data/vectorsTrain_all_chainfix.csv \
+  --output outputs/pocknet_eval
+```
+
+Docker version:
+
+```bash
+docker run --rm --gpus all \
+  -v $PWD/data:/workspace/data \
+  -v $PWD/logs:/workspace/logs \
+  ghcr.io/lal3lu03/pocknet:1.0.0 \
+  predict-dataset \
+    --h5 /workspace/data/h5/all_train_transformer_v2_optimized.h5 \
+    --csv /workspace/data/vectorsTrain_all_chainfix.csv \
+    --output /workspace/logs/dataset_run
+```
+
+---
+
+## Data preparation
+
+The full training pipeline uses:
+
+* **Training and validation**: CHEN11 plus the complete joint P2Rank dataset
+* **Testing**: BU48, held out for final evaluation
+
+### 1. Generate ESM2 embeddings
+
+```bash
+python src/tools/generate_esm2_embeddings.py \
+  --ds-file data/all_train.ds \
+  --pdb-base data/p2rank-datasets \
+  --out-dir data/esm2_3B_chain
+```
+
+### 2. Extract surface features
+
+```bash
+python src/datagen/extract_protein_features.py \
+  data/all_train.ds data/output_train
+```
+
+### 3. Merge chain-fixed feature tables
+
+```bash
+python src/datagen/merge_chainfix_complete.py
+```
+
+This creates the canonical feature CSV:
+
+```text
+data/vectorsTrain_all_chainfix.csv
+```
+
+### 4. Build optimized H5 dataset
 
 ```bash
 bash run_h5_generation_optimized.sh
 ```
 
-The script validates inputs and writes
-`data/h5/all_train_transformer_v2_optimized.h5`, including neighbour indices and
-distance metadata for transformer aggregation. Logs appear in
-`h5_generation_optimized.log`.
+The optimized H5 file stores features, neighbour indices, and distance metadata:
+
+```text
+data/h5/all_train_transformer_v2_optimized.h5
+```
 
 ---
 
 ## Training
 
-### CLI-first workflow
-
-All training/evaluation orchestration now flows through the Click CLI:
+### Recommended CLI workflow
 
 ```bash
 python src/scripts/end_to_end_pipeline.py train-model \
@@ -294,215 +363,280 @@ python src/scripts/end_to_end_pipeline.py train-model \
   -o trainer.devices=2
 ```
 
-The command mirrors the methodology chapter in the thesis and writes a JSON
-summary containing the resolved Hydra config, the best checkpoint path, and all
-Lightning metrics. Combine it with the Docker targets for fully reproducible
-runs (see the examples in `REPRODUCIBILITY.md` and
-`tex/master_thesis/91-appendix.tex`).
+### Hydra workflow
 
-### Legacy launchers
+```bash
+export PROJECT_ROOT=$(pwd)
+
+python src/train.py \
+  experiment=fusion_transformer_aggressive \
+  trainer.devices=2
+```
+
+### Legacy launcher
 
 ```bash
 export PROJECT_ROOT=$(pwd)
 bash launch_aggressive_training.sh
 ```
 
-This starts DDP training across GPUs `1,3,4` in a tmux session named
-`transformer_training`.  Logs stream to
-`training_aggressive_<timestamp>.log` and metrics are pushed to W&B (project
-`fusion_pocknet_thesis`) if you have credentials configured.
-
 ### SWA finetuning
-
-To run the stochastic weight averaging schedule after base training finishes,
-launch:
 
 ```bash
 export PROJECT_ROOT=$(pwd)
 bash launch_aggressive_swa.sh
 ```
 
-### Running manually
+Training supports:
 
-You can also invoke Hydra directly:
-
-```bash
-export PROJECT_ROOT=$(pwd)
-python src/train.py experiment=fusion_transformer_aggressive trainer.devices=2
-```
-
-The second maintained experiment, `fusion_all_train_complete`, uses mean pooled
-ESM embeddings with optional on-the-fly k-NN aggregation and can be selected in
-the same manner.
+* PyTorch Lightning
+* Hydra configuration management
+* Distributed Data Parallel training
+* W&B logging
+* Checkpointing
+* Seed-controlled experiments
+* SWA finetuning
 
 ---
 
 ## Evaluation
 
-Hydra uses the new transformer defaults, so evaluation is straightforward:
+Evaluate a checkpoint:
 
 ```bash
 export PROJECT_ROOT=$(pwd)
+
 python src/eval.py \
-    experiment=fusion_transformer_aggressive \
-    ckpt_path=/path/to/checkpoint.ckpt
+  experiment=fusion_transformer_aggressive \
+  ckpt_path=/path/to/checkpoint.ckpt
 ```
 
-CSV logs for evaluation runs are emitted under `logs/<task>/runs/...` alongside
-Hydra configuration snapshots.
+Evaluation outputs include:
 
-## End-to-End CLI
-
-`src/scripts/end_to_end_pipeline.py` exposes a Click-powered CLI that mirrors the
-standalone train/eval/post-processing entry points so you can orchestrate
-complete workflows with a single command.
-
-| Command | Purpose | Example |
-| --- | --- | --- |
-| `train-model` | Launch Hydra/Lightning training and store a JSON summary. | `python src/scripts/end_to_end_pipeline.py train-model --summary outputs/train_summary.json -o trainer.fast_dev_run=true` |
-| `auto-run` | From a dataset or PDB root, generate features, embeddings, H5, and run inference with the baked checkpoint by default. | `python src/scripts/end_to_end_pipeline.py auto-run data/all_train.ds --pdb-root data/p2rank-datasets --device cuda:0 --threads 8` |
-| `predict-dataset` | Run checkpoint + pocket aggregation over an H5 dataset. | `python src/scripts/end_to_end_pipeline.py predict-dataset --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_eval_cli --max-proteins 2` |
-| `predict-pdb` | Produce pockets for a single protein or local PDB file. | `python src/scripts/end_to_end_pipeline.py predict-pdb 1a4j_H --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/pocknet_single` |
-| `full-run` | (Optionally) train and immediately execute production inference. | `python src/scripts/end_to_end_pipeline.py full-run --h5 data/h5/all_train_transformer_v2_optimized.h5 --csv data/vectorsTrain_all_chainfix.csv --output outputs/release_candidate -o trainer.fast_dev_run=true` |
-
-If a baked checkpoint is present (e.g., via the Docker image), the CLI uses it automatically; add `--checkpoint <path>` only when overriding with your own weights.
-
-**Auto-run from a raw dataset:**  
-Point `auto-run` at a `.ds` file, directory, or single PDB plus the PDB root to generate features, ESM2 embeddings, H5, and pockets in one shot (uses the baked checkpoint unless overridden):
-
-```bash
-python src/scripts/end_to_end_pipeline.py auto-run data/all_train.ds \
-  --pdb-root data/p2rank-datasets \
-  --device cuda:0 \
-  --threads 8
-```
-
-> Tip  
-> Add overrides such as `-o trainer.fast_dev_run=true` or
-> `-o data.limit_train_batches=0.02` for quick smoke tests in CI/Docker.
-
-These commands mirror the methodology released with the thesis (see
-`tex/master_thesis/03-methodology.tex` for the workflow narrative and
-`tex/master_thesis/91-appendix.tex` for the reproducibility ledger details).
-
-**End-to-end recipe:**  
-1. `train-model` — trains on the full CHEN11 + joint dataset (as listed in `data/all_train.ds`) and logs the checkpoint path plus metrics to JSON.  
-2. `predict-dataset --split test --h5 data/h5/all_train_transformer_v2_optimized.h5 [--checkpoint <best.ckpt>]` — runs the release post-processing on BU48 only, writing summaries to `outputs/final_seed_sweep/`. If no checkpoint is given and a baked one is present, it is used automatically.  
-3. `predict-pdb <pdb_or_id>` — sanity-check a specific protein or local PDB file (copies the file into the output dir and writes `pockets.csv` + PyMOL script).  
-4. `full-run` — combines training + evaluation when you want a single command for CI/Docker smoke tests (use overrides to limit batch counts if desired).
-
-### Release metrics (5-seed sweep)
-
-The final BU48 evaluation aggregates **five** independently-seeded SWA runs,
-captures full pocket-level post-processing, and stores all artefacts under
-`outputs/final_seed_sweep/`:
-
-| Metric | Mean | 95% CI | Source |
-| --- | --- | --- | --- |
-| Mean IoU (pocket-level) | 0.1276 | ±0.0124 | `final_seed_sweep/final_ensemble_summary.csv` |
-| Best IoU (oracle pocket) | 0.1580 | ±0.0141 | `final_seed_sweep/final_ensemble_summary.csv` |
-| GT coverage | 0.8979 | ±0.0057 | `final_seed_sweep/final_ensemble_summary.csv` |
-| Avg pockets / protein | 6.37 | ±0.87 | `final_seed_sweep/final_ensemble_summary.csv` |
-| Threshold sweep CSV | – | – | `final_seed_sweep/threshold_sweep_aggregated.csv` |
-
-Per-protein means/standard deviations (for IoU, coverage, pocket counts) are
-available in `final_seed_sweep/protein_aggregated_metrics.csv`, which the thesis
-uses for the qualitative case studies and appendix tables.
-
-### Current Benchmark Numbers
-
-All metrics are reported on the BU48 test split (48 apo structures) using the
-recreated solvent-accessible surface pipeline:
-
-| Stage | Model Variant | IoU | PR–AUC | Notes |
-| --- | --- | --- | --- | --- |
-| I | TabNet (tabular descriptors) | **0.1498** | 0.231 | Reimplementation of the hand-crafted P2Rank descriptor baseline |
-| II | TabNet + centred ESM2 | 0.1710 | 0.262 | Adds residue language-model context (ESM2-t36-3B) |
-| III | Transformer + kNN (epoch 14) | 0.2780 | **0.424** | Best single checkpoint before SWA |
-| III | Transformer + kNN + SWA | **0.2950** | 0.414 | Single-seed SWA checkpoint (epoch window 20–30); see release metrics above for the 5-seed pocket analysis |
-
-Pocket-level clustering (DBSCAN, `eps=3.0`, `min_samples=5`, score threshold
-`0.91`) yields the following success rates (single-best prediction = Top‑1):
-
-- DCC success@1: 39 %
-- DCA success@1: 75 %
-- DCC success@3: 50 %
-- DCA success@3: 89 %
-
-Full per-protein summaries and qualitative case studies are stored under
-`outputs/pocknet_eval_run_test/` with the aggregated CSV/HTML exports consumed
-by `tex/master_thesis/05-results.tex` and the figure notebooks.
+* point-level metrics
+* pocket-level metrics
+* clustered pocket predictions
+* per-protein summaries
+* Hydra config snapshots
+* CSV logs
+* optional PyMOL visualization files
 
 ---
 
 ## Post-processing
 
-The production-ready post-processing stage is implemented in
-`post_processing/pocketnet_aggregation.py` (see `docs/REFERENCES_P2RANK.md` for
-full provenance) and is exercised via
-`post_processing/run_production_pipeline.py`—the same entry point the CLI
-invokes. DBSCAN success metrics, pocket CSVs, PyMOL renderings, and case-study
-panels are written under `outputs/<run>/` and referenced throughout the thesis.
-The older Groovy-style scripts remain archived in `deprecated/` for historical
-comparisons.
+PockNet converts point-wise ligandability scores into pocket predictions through:
+
+1. thresholding high-scoring SAS points
+2. DBSCAN clustering
+3. pocket scoring
+4. non-maximum suppression
+5. DCC and DCA distance-based evaluation
+
+Main implementation:
+
+```text
+post_processing/pocketnet_aggregation.py
+```
+
+Production entry point:
+
+```text
+post_processing/run_production_pipeline.py
+```
+
+The post-processing stage follows P2Rank-style conventions for pocket-level evaluation and ranking.
+
+---
+
+## Repository layout
+
+```text
+PockNet/
+├── README.md
+├── environment.yaml
+├── pyproject.toml
+├── setup.py
+├── Dockerfile
+├── Makefile
+├── configs/
+│   ├── data/
+│   ├── experiment/
+│   ├── model/
+│   ├── trainer/
+│   └── logger/
+├── src/
+│   ├── datagen/
+│   ├── datamodules/
+│   ├── models/
+│   ├── scripts/
+│   ├── tools/
+│   ├── train.py
+│   └── eval.py
+├── post_processing/
+├── splits/
+├── seeds/
+├── docs/
+├── data/
+├── logs/
+├── outputs/
+├── deprecated/
+├── REPRODUCIBILITY.md
+└── LICENSE
+```
+
+Large generated artifacts such as datasets, embeddings, H5 files, checkpoints, logs, and temporary outputs are not expected to be committed directly.
+
+---
+
+## Reproducibility
+
+The project is designed for reproducible research workflows:
+
+* deterministic seed configuration in `seeds/master_seeds.yaml`
+* Hydra config snapshots for each run
+* checkpointed PyTorch Lightning training
+* Dockerized release environment
+* documented dataset manifests
+* SHA-256 digest tracking in `REPRODUCIBILITY.md`
+* logged evaluation outputs and post-processing summaries
+
+Main reproducibility files:
+
+```text
+REPRODUCIBILITY.md
+seeds/master_seeds.yaml
+docs/src_variable_renames.csv
+docs/REFERENCES_P2RANK.md
+```
+
+---
+
+## Makefile shortcuts
+
+```bash
+make docker-build
+make docker-run ARGS="--help"
+make docker-run ARGS="predict-pdb /workspace/data/example/1a4j.pdb --output /workspace/logs/test"
+make docker-full-run
+```
 
 ---
 
 ## Troubleshooting
 
-- **Hydra override errors:** override syntax is strict.  Refer to
-  <https://hydra.cc/docs/advanced/override_grammar/basic> if you see
-  `mismatched input '=' expecting <EOF>`.
-- **Missing H5 or embeddings:** ensure `data/esm2_3B_chain/`,
-  `data/output_train/`, and `data/vectorsTrain_all_chainfix.csv` exist before
-  running the H5 generator.
-- **Shared memory errors:** the datamodule writes to `/dev/shm/pocknet` by
-  default.  If `/dev/shm` is unavailable, set `POCKNET_SHM_DIR` to a writable
-  tmpfs path before launching training.
-- **W&B offline:** set `WANDB_MODE=offline` or edit `configs/logger/wandb.yaml`
-  if you prefer not to push metrics.
+### Hydra override errors
+
+Hydra override syntax is strict. Use:
+
+```bash
+-o trainer.devices=2
+```
+
+or:
+
+```bash
+python src/train.py trainer.devices=2
+```
+
+Avoid spaces around `=`.
+
+### Missing embeddings or H5 files
+
+Check that the following exist:
+
+```text
+data/esm2_3B_chain/
+data/output_train/
+data/vectorsTrain_all_chainfix.csv
+data/h5/all_train_transformer_v2_optimized.h5
+```
+
+### ESM2 downloads repeatedly
+
+Mount a persistent cache:
+
+```bash
+-v $PWD/esm_cache:/workspace/.cache/torch
+```
+
+### Shared memory issues
+
+Set a custom shared-memory directory:
+
+```bash
+export POCKNET_SHM_DIR=/path/to/writable/tmpfs
+```
+
+### W&B offline mode
+
+```bash
+export WANDB_MODE=offline
+```
 
 ---
 
-## Reproducibility Ledger
+## Limitations
 
-- `REPRODUCIBILITY.md` captures the frozen commit (`7972cbe8066d`), dataset
-  SHA-256 digests, the Docker/Makefile workflow, and the CLI invocations mirrored
-  by Appendix~\ref{app:release-ledger}.
-- `seeds/master_seeds.yaml` stores the canonical RNG seeds used across Hydra
-  configs (global/train/finetune) so split regeneration stays deterministic.
-- `docs/src_variable_renames.csv` enumerates every P2Rank-era symbol that was
-  renamed inside `src/` and `post_processing/` (e.g., `P2RankParams →
-  PocketAggregationParams`) so the thesis narrative and the cleaned codebase
-  reference the same concepts.
-- `docs/REFERENCES_P2RANK.md` carries the textual provenance statement cited in
-  `tex/master_thesis/03-methodology.tex` and Appendix~\ref{app:release-ledger},
-  ensuring the post-processing stage keeps the original credit trail intact.
+PockNet is a research project and should not be interpreted as an experimentally validated drug-discovery tool.
+
+Current limitations include:
+
+* predictions are computational and not prospectively validated
+* BU48 contains only 48 apo/holo protein pairs
+* membrane proteins, intrinsically disordered proteins, and non-canonical ligands are underrepresented
+* ESM2 embeddings are frozen in the reported experiments
+* the final neighbourhood size is fixed to k = 3
+* pocket-level performance is stricter than SAS-point performance because predictions must form coherent spatial objects
 
 ---
 
-## License
+## Roadmap
 
-Apache License 2.0 — see `LICENSE` for full terms. Include the copyright and
-LICENSE notice when redistributing or modifying the code.
+Planned or natural next steps:
+
+* integrate equivariant graph neural networks for geometry-aware message passing
+* expand evaluation to COACH420, HOLO4K, and PDBbind
+* test AlphaFold-predicted structures with docked ligands
+* add multi-task prediction for ligandability and interaction types
+* explore task-adaptive protein language model fine-tuning
+* improve calibration and uncertainty estimation
+* package the inference pipeline as a cleaner Python API
+
+---
+
+## Citation and provenance
+
+This project builds on ideas from P2Rank-style surface-point learning and uses a recreated solvent-accessible surface descriptor pipeline.
+
+Please cite the original P2Rank work when reusing the descriptor or post-processing concepts:
+
+```text
+Krivák, R., & Hoksza, D. (2018).
+P2Rank: machine learning based tool for rapid and accurate prediction of ligand binding sites from protein structure.
+Journal of Cheminformatics, 10(1), 39.
+```
 
 ---
 
 ## Acknowledgements
 
-Supervised by Univ. Prof. Mag. Dr. Günter Klambauer and Florian Sestak, MSc.
+This project was supervised by:
+
+* Univ. Prof. Mag. Dr. Günter Klambauer
+* Florian Sestak, MSc
+
+Developed at Johannes Kepler University Linz, Institute for Machine Learning.
 
 ---
 
-## Contributing / Roadmap
+## License
 
-1. Flesh out the refreshed post-processing pipeline (with deterministic tests).
-2. Automate end-to-end retraining via a single CLI entrypoint.
-3. Rename the model and configs to the final PockNet naming once training wraps.
-
-Pull requests are welcome—please place experimental work under `deprecated/` or
-open an issue if you plan a larger refactor.
+Apache License 2.0. See `LICENSE` for details.
 
 ---
 
-© 2025 PockNet Project – maintained for the fusion transformer pipeline.
+## Maintainer
+
+Maximilian Hageneder
+LinkedIn: `https://www.linkedin.com/in/maximilian-hageneder-ai`
